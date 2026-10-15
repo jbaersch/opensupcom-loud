@@ -926,8 +926,18 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
     update_current_layer(ctx.terrain, L);
     if (destroyed() || !in_registry()) return false;
 
-    // Air unit separation: lightweight boids repulsion to prevent stacking
-    if (is_air_unit() && !dying_ && navigator_.is_moving()) {
+    // Circling an attack or work target flies without a navigator goal.
+    // Only extend avoidance to that circling mode: a winged guard approach
+    // must still reach its hold point. Use this tick's flight, not a cached
+    // display speed; resting also clears the horizontal velocity.
+    const bool circling_target =
+        circles(*this) && !command_queue_.empty() &&
+        command_queue_.front().type == CommandType::Attack && command_queue_.front().engaged;
+    const bool flew_circling =
+        air_stepped_ && (circling_target || circles_its_work()) &&
+        (air_velocity_.x * air_velocity_.x + air_velocity_.z * air_velocity_.z > 0.0f);
+    if (is_air_unit() && !dying_ && !is_being_built_ && transport_id_ == 0 &&
+        parent_entity_id() == 0 && (navigator_.is_moving() || flew_circling)) {
         constexpr f32 SEPARATION_RADIUS = 8.0f;
         constexpr f32 SEPARATION_FORCE = 3.0f;
         const auto nearby = registry.units_in_radius(position().x, position().z, SEPARATION_RADIUS);
@@ -939,10 +949,16 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
             f32 ndx = position().x - ne->position().x;
             f32 ndz = position().z - ne->position().z;
             f32 nd2 = ndx * ndx + ndz * ndz;
-            if (nd2 > 0.01f && nd2 < SEPARATION_RADIUS * SEPARATION_RADIUS) {
-                f32 inv = 1.0f / std::sqrt(nd2);
-                repulse_x += ndx * inv;
-                repulse_z += ndz * inv;
+            if (nd2 < SEPARATION_RADIUS * SEPARATION_RADIUS) {
+                const f32 distance = std::sqrt(nd2);
+                if (distance > 1e-4f) {
+                    const f32 inv = 1.0f / distance;
+                    repulse_x += ndx * inv;
+                    repulse_z += ndz * inv;
+                } else {
+                    // Same tie as separate_ground_units: lower id east.
+                    repulse_x += entity_id() < ne->entity_id() ? 1.0f : -1.0f;
+                }
             }
         }
         if (repulse_x != 0 || repulse_z != 0) {
