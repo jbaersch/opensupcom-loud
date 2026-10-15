@@ -947,10 +947,32 @@ static int unit_GetWeapon(lua_State* L) {
         lua_setmetatable(L, -2);
     }
 
-    // Store Lua table ref on the weapon
+    // Publish before running OnCreate: source code may ask its unit for
+    // this weapon again while initializing it. Returning the same table
+    // also makes initialization happen exactly once.
     lua_pushvalue(L, -1);
     weapon->lua_table_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     weapon->script_class = classed;
+
+    if (classed) {
+        const std::string label = weapon->label;
+        lua_pushstring(L, "OnCreate");
+        lua_gettable(L, wtable);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, wtable);
+            if (lua_pcall(L, 1, 0, 0) != 0) {
+                const char* error = lua_tostring(L, -1);
+                const std::string diagnostic = "Weapon " + label + " OnCreate error: " +
+                                               (error ? error : "(unknown)");
+                spdlog::warn("{}", diagnostic);
+                if (test_status::count_lua_failures()) test_status::record_failure(diagnostic);
+            }
+        }
+        // A callback may destroy its owner or recursively request other
+        // weapons. Keep only the rooted wrapper and do not read its C++
+        // weapon/owner pointers after source code has run.
+        lua_settop(L, wtable);
+    }
 
     return 1;
 }

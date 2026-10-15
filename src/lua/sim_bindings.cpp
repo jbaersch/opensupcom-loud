@@ -410,11 +410,10 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
     return id; // Lua table left on stack
 }
 
-/// Moho creates a unit's weapon objects between OnPreCreate and OnCreate:
-/// each is an instance of unit:GetWeaponClass(label) (see unit:GetWeapon),
-/// and its OnCreate sets up turret aim controllers, target priorities and
-/// initial silo ammo, and enters IdleState. Unit scripts then find their
-/// weapons by label in their own OnCreate.
+/// Ensure that all weapon script objects have been initialized. GetWeapon
+/// initializes each at first access, so a unit's OnCreate can use its
+/// weapons after establishing the source state they consume. The untouched
+/// weapons initialize here afterward, before OnStopBeingBuilt.
 static void create_unit_weapons(lua_State* L, int unit_tbl, const char* what) {
     lua_pushstring(L, "GetWeaponCount");
     lua_gettable(L, unit_tbl);
@@ -438,19 +437,7 @@ static void create_unit_weapons(lua_State* L, int unit_tbl, const char* what) {
             lua_pop(L, 1);
             continue;
         }
-        const int weapon_tbl = lua_gettop(L);
-        lua_pushstring(L, "OnCreate");
-        lua_gettable(L, weapon_tbl);
-        if (lua_isfunction(L, -1)) {
-            lua_pushvalue(L, weapon_tbl);
-            if (lua_pcall(L, 1, 0, 0) != 0) {
-                spdlog::warn("{} weapon OnCreate error: {}", what, lua_tostring(L, -1));
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        lua_settop(L, weapon_tbl - 1);
+        lua_pop(L, 1);
     }
 }
 
@@ -487,8 +474,9 @@ static int l_CreateUnit(lua_State* L) {
 }
 
 /// A complete unit of `bp_id` for `army` (0-based) at `pos` facing
-/// `orientation`, made as CreateUnit makes one: OnPreCreate, its weapons,
-/// OnCreate, then OnStopBeingBuilt, its footprint and adjacency, and the
+/// `orientation`, made as CreateUnit makes one: OnPreCreate, OnCreate and
+/// the weapons it accesses, remaining weapons, then OnStopBeingBuilt,
+/// its footprint and adjacency, and the
 /// ArmyPool. When `place_of` is given the unit is made where that one
 /// stands, before its scripts run (Moho's transfer passes the old unit's
 /// transform and layer, elevation fixed): its layer, and an aircraft's
@@ -534,7 +522,6 @@ static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_
         lua_pop(L, 1);
     }
 
-    create_unit_weapons(L, tbl, "Unit");
     set_up_initial_rally(sim, id);
 
     // OnCreate
@@ -549,6 +536,8 @@ static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_
     } else {
         lua_pop(L, 1);
     }
+
+    create_unit_weapons(L, tbl, "Unit");
 
     // OnStopBeingBuilt (only for pre-placed units)
     auto* unit_ptr = static_cast<sim::Unit*>(sim.entity_registry().find(id));
@@ -676,7 +665,6 @@ static int l_create_building_unit(lua_State* L) {
         lua_pop(L, 1);
     }
 
-    create_unit_weapons(L, tbl, "Building");
     if (auto* sim = get_sim(L)) {
         set_up_initial_rally(*sim, id);
     }
@@ -693,6 +681,8 @@ static int l_create_building_unit(lua_State* L) {
     } else {
         lua_pop(L, 1);
     }
+
+    create_unit_weapons(L, tbl, "Building");
 
     // Do NOT call OnStopBeingBuilt — that happens when construction finishes
 
