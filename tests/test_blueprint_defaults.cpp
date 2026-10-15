@@ -155,6 +155,51 @@ TEST_CASE("A weapon without a Label reads as the empty string", "[blueprints]") 
     )"));
 }
 
+TEST_CASE("A timed radius change restores weapons whose blueprints omit a range",
+          "[blueprints][weapon-radius-default]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        local bp = {BlueprintId = 'synthetic_radius_defaults', Weapon = {
+            {Label = 'Gun', MaxRadius = 40},
+            {Label = 'Effect'},
+            {Label = 'ExplicitZero', MaxRadius = 0},
+        }}
+        RegisterUnitBlueprint(bp)
+        assert(bp.Weapon[1].MaxRadius == 40, 'explicit range changed')
+        assert(bp.Weapon[2].MaxRadius == 0, 'omitted weapon range not zero')
+        assert(bp.Weapon[3].MaxRadius == 0, 'explicit zero range changed')
+    )"));
+    CHECK(w.check(R"(
+        local bp = {BlueprintId = 'synthetic_timed_radius', Weapon = {
+            {Label = 'Gun', MaxRadius = 40}, {Label = 'Effect'},
+        }}
+        RegisterUnitBlueprint(bp)
+        local weapons = {{bp = bp.Weapon[1], radius = 40},
+                         {bp = bp.Weapon[2], radius = 0}}
+        local duration = coroutine.create(function()
+            -- The source owns timed effects and visits every weapon. A
+            -- missing numeric default must not abort it after changing
+            -- earlier weapons, before it can wait and restore them.
+            for _, weapon in ipairs(weapons) do
+                weapon.radius = weapon.bp.MaxRadius / 4
+            end
+            coroutine.yield('waiting')
+            for _, weapon in ipairs(weapons) do
+                weapon.radius = weapon.bp.MaxRadius
+            end
+        end)
+        local ok, message = coroutine.resume(duration)
+        assert(ok, message)
+        assert(weapons[1].radius == 10 and weapons[2].radius == 0, 'effect not applied')
+        assert(coroutine.status(duration) == 'suspended', 'duration aborted before wait')
+        ok, message = coroutine.resume(duration)
+        assert(ok, message)
+        assert(coroutine.status(duration) == 'dead', 'duration did not finish')
+        assert(weapons[1].radius == 40 and weapons[2].radius == 0, 'effect not restored')
+        assert(bp.Weapon[1].MaxRadius == 40, 'runtime effect changed the blueprint')
+    )"));
+}
+
 TEST_CASE("A unit blueprint's omitted intel, cap cost and drive read as Moho's defaults",
           "[blueprints]") {
     BlueprintWorld w;

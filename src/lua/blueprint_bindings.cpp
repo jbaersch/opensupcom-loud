@@ -215,6 +215,7 @@ static int l_RegisterUnitBlueprint(lua_State* L) {
     static constexpr std::pair<const char*, lua_Number> kWeaponNumberDefaults[] = {
         {"Damage", 0},
         {"DamageRadius", 0},
+        {"MaxRadius", 0},
         {"RackRecoilDistance", 0},
         {"RackReloadTimeout", 0},
         {"RackSalvoChargeTime", 0},
