@@ -519,6 +519,18 @@ public:
     const Replay& recorded_replay() const { return recorded_replay_; }
     /// The setup this game started from, for its recording.
     void set_game_setup(GameSetup setup);
+    /// The authoritative launch option, shared by the UI and sim cheat
+    /// requests. The last value wins, including an explicit disable.
+    bool cheats_enabled() const {
+        const auto& options = recorded_replay_.setup.options.values;
+        for (auto it = options.rbegin(); it != options.rend(); ++it) {
+            if (it->first != "CheatsEnabled") continue;
+            const auto& value = it->second;
+            return (value.type == GameOptionValue::Type::Boolean && value.bool_value) ||
+                   (value.type == GameOptionValue::Type::String && value.string_value == "true");
+        }
+        return false;
+    }
     /// Playing a replay: player input is dropped, since the replay's
     /// commands are the game's only input.
     void set_playback(bool on) { playback_ = on; }

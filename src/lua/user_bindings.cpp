@@ -4,6 +4,7 @@
 // the sim uses, so that library needs no renderer: osc_lua_user links both.
 
 #include "core/localization.hpp"
+#include "core/test_status.hpp"
 #include "platform/executable.hpp"
 #include "lua/user_bindings.hpp"
 
@@ -2485,6 +2486,103 @@ void update_cursor_stats(lua_State* L, const sim::Vector3& at) {
     lua_pop(L, 3); // Cursor, Camera, __EngineStats
 }
 
+namespace {
+
+ui::WorldView* cheat_world_view(lua_State* L) {
+    const auto* sim = get_sim(L);
+    if (!sim || !sim->cheats_enabled() || sim->playback() || sim->army_count() == 0)
+        return nullptr;
+    lua_pushstring(L, "__osc_world_view");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* view = static_cast<ui::WorldView*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return view && view->camera() ? view : nullptr;
+}
+
+void report_cheat_error(const std::string& message) {
+    spdlog::warn("{}", message);
+    if (test_status::count_lua_failures()) test_status::record_failure(message);
+}
+
+void popup_create_unit_menu(lua_State* L, const std::vector<std::string>&) {
+    if (!cheat_world_view(L)) return;
+    auto* renderer = get_renderer(L);
+    if (!renderer) return;
+    f64 x = 0, y = 0;
+    renderer->mouse_position(x, y);
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "import");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, "/lua/ui/dialogs/createunit.lua");
+    if (!lua_isfunction(L, -2) || lua_pcall(L, 1, 1, 0) != 0 || !lua_istable(L, -1)) {
+        report_cheat_error(std::string("PopupCreateUnitMenu: cannot load the source dialog: ") +
+                           (lua_isstring(L, -1) ? lua_tostring(L, -1) : "no module"));
+        lua_settop(L, top);
+        return;
+    }
+    lua_pushstring(L, "CreateDialog");
+    lua_gettable(L, -2);
+    lua_pushnumber(L, x);
+    lua_pushnumber(L, y);
+    if (lua_pcall(L, 2, 0, 0) != 0) {
+        const char* error = lua_tostring(L, -1);
+        report_cheat_error(std::string("PopupCreateUnitMenu: ") + (error ? error : "unknown error"));
+    }
+    lua_settop(L, top);
+}
+
+bool console_number(const std::string& text, f64& value) {
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    return error == std::errc{} && end == text.data() + text.size() && std::isfinite(value);
+}
+
+void cheat_create_unit(lua_State* L, const std::vector<std::string>& args) {
+    auto* view = cheat_world_view(L);
+    auto* queue = get_callback_queue(L);
+    if (!view || !queue) return;
+    f64 army = 0, sx = 0, sy = 0;
+    if (args.size() != 5 || args[1].empty() || !console_number(args[2], army) ||
+        !console_number(args[3], sx) || !console_number(args[4], sy) || army < 0 ||
+        army >= static_cast<f64>(get_sim(L)->army_count()) || std::floor(army) != army) {
+        spdlog::warn("Usage: CreateUnit <blueprint> <army (zero-based)> <screen x> <screen y>");
+        return;
+    }
+    if (auto* renderer = get_renderer(L); renderer && renderer->width() && renderer->height())
+        view->set_viewport(renderer->width(), renderer->height());
+    if (sx < 0 || sy < 0 || sx >= view->viewport_width() || sy >= view->viewport_height()) return;
+    // LOUD's dialog retains the screen point where it opened. The pointer
+    // is over a dialog button now, so project the supplied point instead.
+    sim::Vector3 at;
+    if (!view->get_mouse_world_pos(static_cast<f32>(sx), static_cast<f32>(sy), at.x, at.y, at.z))
+        return;
+    sim::SimCallbackEntry entry;
+    entry.func_name = sim::kCheatCreateUnitCallback;
+    entry.args = {{"Blueprint", args[1]}, {"Army", army}, {"X", f64(at.x)},
+                  {"Y", f64(at.y)}, {"Z", f64(at.z)}};
+    queue->push(std::move(entry));
+}
+
+void cheat_focus_army(lua_State* L, const std::vector<std::string>& args) {
+    if (!cheat_world_view(L)) return;
+    f64 army = 0;
+    if (args.size() != 2 || !console_number(args[1], army) || army < -1 ||
+        army >= static_cast<f64>(get_sim(L)->army_count()) || std::floor(army) != army)
+        return;
+    // The original dialog's army-slot double-click uses the console's
+    // zero-based army; the UI binding applies its normal focus request.
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "SetFocusArmy");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    lua_pushnumber(L, army >= 0 ? army + 1 : -1);
+    if (lua_pcall(L, 1, 0, 0) != 0) {
+        const char* error = lua_tostring(L, -1);
+        report_cheat_error(std::string("SetFocusArmy: ") + (error ? error : "unknown error"));
+    }
+    lua_settop(L, top);
+}
+
+} // namespace
+
 void register_session_console_commands(ui::Console& console) {
     console.add("StartCommandMode", start_command_mode);
     console.add("UI_SelectByCategory", select_by_category);
@@ -2493,6 +2591,9 @@ void register_session_console_commands(ui::Console& console) {
     console.add("UI_ShowRenameDialog", show_rename_dialog);
     console.add("RenameUnit", rename_unit);
     console.add("UI_TrackUnit", track_unit);
+    console.add("PopupCreateUnitMenu", popup_create_unit_menu);
+    console.add("CreateUnit", cheat_create_unit);
+    console.add("SetFocusArmy", cheat_focus_army);
 }
 
 } // namespace osc::lua

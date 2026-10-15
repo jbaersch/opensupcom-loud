@@ -3,6 +3,7 @@
 // so in multiplayer every peer runs each one on the same tick.
 
 #include "map/terrain.hpp"
+#include "core/test_status.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/lua_bytes.hpp"
 #include "sim/sim_state.hpp"
@@ -18,6 +19,8 @@ extern "C" {
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <limits>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -53,6 +56,48 @@ template <typename T> const T* arg(const SimCallbackEntry& cb, const char* key) 
 const f64* number_in(const SimCallbackEntry& cb, const char* key, f64 lo, f64 hi) {
     const auto* v = arg<f64>(cb, key);
     return v && *v >= lo && *v <= hi ? v : nullptr;
+}
+
+void cheat_create_unit(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
+    // A queued or recorded request cannot grant itself permission. Check
+    // again here even when the local UI already checked before submitting.
+    if (!sim.cheats_enabled()) {
+        spdlog::warn("Cheat CreateUnit rejected: cheats are disabled for this session");
+        return;
+    }
+    const auto* blueprint = arg<std::string>(cb, "Blueprint");
+    const auto* army = arg<f64>(cb, "Army");
+    constexpr f64 limit = std::numeric_limits<f32>::max();
+    const auto* x = number_in(cb, "X", -limit, limit);
+    const auto* y = number_in(cb, "Y", -limit, limit);
+    const auto* z = number_in(cb, "Z", -limit, limit);
+    if (!blueprint || blueprint->empty() || blueprint->find('\0') != std::string::npos || !army ||
+        !(*army >= 0 && *army < static_cast<f64>(sim.army_count())) || *army != std::floor(*army) ||
+        !x || !y || !z) {
+        spdlog::warn("Cheat CreateUnit rejected: invalid blueprint, army or position");
+        return;
+    }
+    const auto report = [](const std::string& message) {
+        spdlog::warn("{}", message);
+        if (test_status::count_lua_failures()) test_status::record_failure(message);
+    };
+    lua_pushstring(L, "CreateUnit");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        report("Cheat CreateUnit error: source CreateUnit is unavailable");
+        return;
+    }
+    lua_pushlstring(L, blueprint->data(), blueprint->size());
+    lua_pushnumber(L, *army + 1); // source armies are 1-based
+    lua_pushnumber(L, *x);
+    lua_pushnumber(L, *y);
+    lua_pushnumber(L, *z);
+    if (lua_pcall(L, 5, 0, 0) != 0) {
+        const char* err = lua_tostring(L, -1);
+        report(std::string("Cheat CreateUnit error: ") + (err ? err : "(unknown)"));
+        lua_pop(L, 1);
+    }
 }
 
 /// The live units a callback names, in its order.
@@ -445,6 +490,7 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     const int top = lua_gettop(L);
     const NotHumanInput not_human(*this);
     if (cb.func_name == kProcessInfoCallback) process_info(*this, L, cb);
+    else if (cb.func_name == kCheatCreateUnitCallback) cheat_create_unit(*this, L, cb);
     else if (cb.func_name == kUnitSettingCallback) unit_setting(*this, L, cb);
     else if (cb.func_name == kDecreaseBuildCountCallback) decrease_build_count(*this, L, cb);
     else if (cb.func_name == kIncreaseBuildCountCallback) increase_build_count(*this, cb);

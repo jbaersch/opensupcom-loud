@@ -45,7 +45,8 @@ std::vector<sim::FormationSlot> plan_ui_formation(lua_State* L,
                                                   f32 facing);
 
 /// The console commands that act on the game session (M217d, Moho's):
-/// StartCommandMode, UI_SelectByCategory and IssueCommand.
+/// StartCommandMode, UI_SelectByCategory, IssueCommand and the cheat-gated
+/// source create-unit dialog and its recorded unit-creation requests.
 void register_session_console_commands(ui::Console& console);
 
 } // namespace osc::lua

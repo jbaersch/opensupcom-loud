@@ -19,6 +19,11 @@ inline constexpr const char* kProcessInfoCallback = "__osc_ProcessInfo";
 /// to the value it sets). Handled by the engine.
 inline constexpr const char* kUnitSettingCallback = "__osc_UnitSetting";
 
+/// A permitted cheat-console CreateUnit request. Args Blueprint (string),
+/// Army (0-based), and X/Y/Z (numbers); applied through the source CreateUnit
+/// inside the command stream, after checking the sim's launch permission.
+inline constexpr const char* kCheatCreateUnitCallback = "__osc_CheatCreateUnit";
+
 /// Func name of DecreaseBuildCountInQueue(index, count) (Args Index, Count;
 /// unit_ids = the factory). Handled by the engine.
 inline constexpr const char* kDecreaseBuildCountCallback = "__osc_DecreaseBuildCount";

@@ -8,6 +8,8 @@ add_executable(osc_tests
     test_zero_damage_targeter.cpp
     test_unit_weapon_lifecycle.cpp
     test_entity_kill_contract.cpp
+    test_cheat_spawn.cpp
+    test_cheat_console.cpp
     test_vfs.cpp
     test_vfs_paths.cpp
     test_platform_paths.cpp
