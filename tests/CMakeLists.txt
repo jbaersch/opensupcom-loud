@@ -116,6 +116,7 @@ add_executable(osc_tests
     test_command_graph.cpp
     test_utf8_substring.cpp
     test_overlay_footprint.cpp
+    test_formation_icons.cpp
     test_font_cache.cpp
     test_minimap_area.cpp
     test_xact.cpp

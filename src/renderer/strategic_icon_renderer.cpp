@@ -674,11 +674,33 @@ void StrategicIconRenderer::emit_runs(const Runs& runs, TextureCache& tex_cache,
     }
 }
 
+void StrategicIconRenderer::append_formation_icon(const sim::Vector3& position,
+                                                  const std::string& path,
+                                                  const GPUTexture& texture,
+                                                  const std::array<f32, 16>& vp, u32 viewport_w,
+                                                  u32 viewport_h) {
+    if (!strategic_zoom_active_ || !nis_icons_ || path.empty() || texture.width == 0 ||
+        texture.height == 0 || viewport_w == 0 || viewport_h == 0 || quad_count_ >= MAX_ICON_QUADS)
+        return;
+    f32 x = 0, y = 0;
+    const f32 width = static_cast<f32>(viewport_w);
+    const f32 height = static_cast<f32>(viewport_h);
+    if (!world_to_screen(position.x, position.y, position.z, vp, width, height, x, y) ||
+        !std::isfinite(x) || !std::isfinite(y) || x < -32.0f || x > width + 32.0f || y < -32.0f ||
+        y > height + 32.0f)
+        return;
+    // Match the mesh preview's yellow tint, through the normal strategic
+    // icon shader, texture size and user-selected icon scale.
+    constexpr f32 tint = 216.0f / 255.0f;
+    emit_icon(std::floor(x), std::floor(y), path, texture, tint, tint, 0.0f);
+}
+
 bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& camera,
                                    const std::array<f32, 16>& vp_matrix,
                                    const std::unordered_set<u32>* selected_ids,
                                    TextureCache& tex_cache, u32 viewport_w, u32 viewport_h,
-                                   lua_State* L, f32 frame_seconds) {
+                                   lua_State* L, f32 frame_seconds,
+                                   std::span<const FormationGhost> formation) {
     quads_.clear();
     quad_textures_.clear();
     projectile_icons_.clear();
@@ -703,6 +725,19 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
         emit_runs(runs, tex_cache,
                   [&](f32 x, f32 y, const std::string& path, const GPUTexture& tex, f32 r, f32 g,
                       f32 b) { emit_icon(x, y, path, tex, r, g, b); });
+        // The main view replaces meshes with icons at strategic zoom.
+        // Formation slots must follow that same switch, even though they
+        // are preview positions rather than world entities.
+        if (strategic_zoom_active_) {
+            for (const FormationGhost& ghost : formation) {
+                if (quad_count_ >= MAX_ICON_QUADS) break;
+                const IconBlueprint& bp = icon_blueprint(ghost.blueprint_id, L);
+                if (bp.rest.empty()) continue;
+                if (const GPUTexture* texture = tex_cache.get(bp.rest))
+                    append_formation_icon(ghost.position, bp.rest, *texture, vp_matrix, viewport_w,
+                                          viewport_h);
+            }
+        }
     }
     if (camera.zoom() >= kStrategicProjectileLod) {
         VkDescriptorSet white = tex_cache.fallback_descriptor();

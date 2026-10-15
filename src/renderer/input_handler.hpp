@@ -4,6 +4,7 @@
 
 #include "core/types.hpp"
 #include "renderer/build_template.hpp"
+#include "renderer/formation_ghost.hpp"
 #include "renderer/recon_view.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/formation.hpp"
@@ -153,13 +154,6 @@ struct FormationDrag {
     std::vector<u32> units;
     std::string script;
     bool settled() const { return wait <= 0; }
-};
-
-/// A unit's place in a settled drag formation (CWldSession::RenderMeshPreviews)
-struct FormationGhost {
-    std::string blueprint_id;
-    sim::Vector3 position;
-    f32 heading = 0;
 };
 
 /// A command graph waypoint dragged (Moho's UICommandDragger): where it is

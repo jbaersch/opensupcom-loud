@@ -2838,7 +2838,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
 
     // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
     strategic_icon_renderer_.update(view, camera_, vp, selected_ids, texture_cache_, window_width_,
-                                    window_height_, L, frame_dt_);
+                                    window_height_, L, frame_dt_, formation_ghosts_);
     economy_overlay_renderer_.update(
         view, camera_, vp, player_army_,
         [&](const std::string& id) { return strategic_icon_renderer_.fade_in_zoom(id, L); },
@@ -3966,10 +3966,12 @@ Renderer::capture_cartographic(const map::Terrain& terrain,
     out.height = view.height;
     void* mapped = nullptr;
     if (vmaMapMemory(allocator_, readback.allocation, &mapped) == VK_SUCCESS) {
-        vmaInvalidateAllocation(allocator_, readback.allocation, 0, VK_WHOLE_SIZE);
-        const auto* bytes = static_cast<const u8*>(mapped);
-        out.frame.assign(bytes, bytes + image_bytes);
-        out.output.assign(bytes + image_bytes, bytes + 2 * image_bytes);
+        if (mapped) {
+            vmaInvalidateAllocation(allocator_, readback.allocation, 0, VK_WHOLE_SIZE);
+            const auto* bytes = static_cast<const u8*>(mapped);
+            out.frame.assign(bytes, bytes + image_bytes);
+            out.output.assign(bytes + image_bytes, bytes + 2 * image_bytes);
+        }
         vmaUnmapMemory(allocator_, readback.allocation);
     }
     vmaDestroyBuffer(allocator_, readback.buffer, readback.allocation);

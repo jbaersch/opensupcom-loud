@@ -1,12 +1,14 @@
 #pragma once
 
 #include "renderer/vk_types.hpp"
+#include "renderer/formation_ghost.hpp"
 #include "renderer/ui_renderer.hpp" // UIInstance, UIDrawGroup
 #include "core/types.hpp"
 #include "sim/game_colors.hpp"
 
 #include <array>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -17,6 +19,7 @@ struct lua_State;
 namespace osc::sim {
 class FrameView;
 struct EntityRecord;
+struct Vector3;
 } // namespace osc::sim
 
 namespace osc::renderer {
@@ -80,7 +83,13 @@ public:
     bool update(const sim::FrameView& view, const Camera& camera,
                 const std::array<f32, 16>& vp_matrix, const std::unordered_set<u32>* selected_ids,
                 TextureCache& tex_cache, u32 viewport_w, u32 viewport_h, lua_State* L = nullptr,
-                f32 frame_seconds = 0.0f);
+                f32 frame_seconds = 0.0f, std::span<const FormationGhost> formation = {});
+
+    /// Append a ready formation preview icon before uploading the frame's
+    /// quads. Uses this frame's strategic zoom, NIS gate and icon scale.
+    void append_formation_icon(const sim::Vector3& position, const std::string& path,
+                               const GPUTexture& texture, const std::array<f32, 16>& vp,
+                               u32 viewport_w, u32 viewport_h);
 
     /// A minimap's icons, the map drawn at `area`: its own world view through
     /// the same pass (faf-re CUIWorldView::Render), fully zoomed out.
