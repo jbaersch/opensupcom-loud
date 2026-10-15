@@ -725,8 +725,25 @@ Result<void> SessionManager::call_setup_session(lua_State* L) {
 
 void SessionManager::extract_start_positions(lua_State* L,
                                               sim::SimState& sim) {
+    // SetupSession may keep the save's Scenario in its script environment
+    // (LOUD), rather than exporting a global. Optional global lookups must
+    // not invoke config.lua's strict-global error handler.
+    lua_pushstring(L, "Scenario");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "ScenarioInfo");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+        lua_pushstring(L, "Env");
+        lua_rawget(L, -2);
+        lua_remove(L, -2);
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+        lua_pushstring(L, "Scenario");
+        lua_rawget(L, -2);
+        lua_remove(L, -2);
+    }
     // Navigate: Scenario.MasterChain['_MASTERCHAIN_'].Markers
-    lua_getglobal(L, "Scenario");
     if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
     int scenario_idx = lua_gettop(L);
 

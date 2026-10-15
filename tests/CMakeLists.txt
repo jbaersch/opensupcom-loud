@@ -1,4 +1,5 @@
 add_executable(osc_tests
+    test_session_start.cpp
     test_vfs.cpp
     test_vfs_paths.cpp
     test_platform_paths.cpp
