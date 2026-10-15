@@ -1336,7 +1336,7 @@ constexpr OrderSpec kOrders[] = {
     {"RULEUCC_Move", sim::CommandType::Move, "Move", false},
     {"RULEUCC_Attack", sim::CommandType::Attack, "Attack", false},
     {"RULEUCC_Patrol", sim::CommandType::Patrol, "Patrol", false},
-    {"RULEUCC_Guard", sim::CommandType::Guard, "Guard", true},
+    {"RULEUCC_Guard", sim::CommandType::Guard, "Guard", false},
     {"RULEUCC_Reclaim", sim::CommandType::Reclaim, "Reclaim", true},
     {"RULEUCC_Repair", sim::CommandType::Repair, "Repair", true},
     {"RULEUCC_Capture", sim::CommandType::Capture, "Capture", true},

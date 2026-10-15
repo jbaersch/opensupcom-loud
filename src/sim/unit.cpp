@@ -1801,27 +1801,77 @@ bool Unit::shield_needs_repair(EntityRegistry& registry, lua_State* L) {
 
 bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
                         lua_State* L) {
-    auto* target = registry.find(cmd.target_id);
+    const u32 target_id = cmd.target_id;
+    const UnitCommand* order = command_queue_.empty() ? nullptr : &command_queue_.front();
+    const u32 order_id = order ? order->command_id : cmd.command_id;
+    const auto current = [&] {
+        return (!order && command_queue_.empty()) ||
+               (order && !command_queue_.empty() && &command_queue_.front() == order &&
+                command_queue_.front().command_id == order_id);
+    };
+    auto* target = registry.find(target_id);
     if (!target || target->destroyed() || !target->is_unit()) return false;
     auto* target_unit = static_cast<Unit*>(target);
 
     // Don't repair units that are being built (use build-assist instead)
     if (target_unit->is_being_built()) return false;
+    const bool enhancement = target_unit->is_enhancing();
+    const bool silo = !enhancement && target_unit->silo_building();
     if (target->health() >= target->max_health() &&
-        !target_unit->shield_needs_repair(registry, L)) {
+        !target_unit->shield_needs_repair(registry, L) && !enhancement && !silo) {
         return false;
     }
+    if (destroyed() || !in_registry() || !current()) return false;
+    target = registry.find(target_id);
+    if (!target || target->destroyed()) return false;
     if (build_rate_ <= 0) return false;
 
     // Its blueprint's BuildTime/BuildCostMass/BuildCostEnergy
-    const BuildEconomy costs = blueprint_build_economy(L, target_unit->unit_id());
+    BuildEconomy costs = blueprint_build_economy(L, target_unit->unit_id());
+    if (enhancement) {
+        // The active work item's costs, never the subject's combined drain
+        // (which includes its own adjacency and maintenance). Its source
+        // OnStartBuild computes this helper's own modifiers afterwards.
+        costs.time = target_unit->enhance_build_time_;
+        const int top = lua_gettop(L);
+        if (target_unit->lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, target_unit->lua_table_ref());
+            lua_pushstring(L, "WorkItem");
+            lua_rawget(L, -2);
+        } else lua_pushnil(L);
+        if (!lua_istable(L, -1)) {
+            lua_settop(L, top);
+            lua_getglobal(L, "__blueprints");
+            for (const char* key : {target_unit->blueprint_id().c_str(), "Enhancements",
+                                    target_unit->enhance_name().c_str()}) {
+                if (!lua_istable(L, -1)) break;
+                lua_pushstring(L, key);
+                lua_rawget(L, -2);
+            }
+        }
+        if (!lua_istable(L, -1)) {
+            lua_settop(L, top);
+            return false;
+        }
+        lua_pushstring(L, "BuildCostMass");
+        lua_rawget(L, -2);
+        costs.mass = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        lua_pushstring(L, "BuildCostEnergy");
+        lua_rawget(L, -2);
+        costs.energy = lua_tonumber(L, -1);
+        lua_settop(L, top);
+    } else if (silo) {
+        const auto& missile = target_unit->silo_build();
+        costs = {missile.build_time, missile.mass, missile.energy};
+    }
     repair_build_time_ = costs.time;
     repair_cost_mass_ = costs.mass;
     repair_cost_energy_ = costs.energy;
 
     if (repair_build_time_ <= 0) return false;
 
-    repair_target_id_ = cmd.target_id;
+    repair_target_id_ = target_id;
 
     // Set economy consumption (same formula as build)
     economy_.consumption_mass =
@@ -1830,14 +1880,31 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
         repair_cost_energy_ * static_cast<f64>(build_rate_) / repair_build_time_;
     economy_.consumption_active = true;
 
+    // CUnitRepairTask inherits an enhancement's script work item before
+    // OnStartBuild("Repair"); LOUD uses it in UpdateConsumptionValues.
+    if (enhancement) {
+        call_lua_method_with_entity(L, "InheritWork", target);
+        if (destroyed() || !in_registry()) return false;
+        if (!current() || repair_target_id_ != target_id) return false;
+        target = registry.find(repair_target_id_);
+        if (!target || target->destroyed()) {
+            stop_repairing(L, registry);
+            return false;
+        }
+    }
+
     spdlog::info("start_repair: entity #{} repairing #{} "
                  "(BuildTime={:.0f} BuildRate={:.1f})",
-                 entity_id(), cmd.target_id, repair_build_time_, build_rate_);
+                 entity_id(), target_id, repair_build_time_, build_rate_);
 
     {
         const Vector3 at = target->position();
         aim_builder_arms(&at, L);
     }
+    if (destroyed() || !in_registry() || !current() || repair_target_id_ != target_id)
+        return false;
+    target = registry.find(target_id);
+    if (!target || target->destroyed()) return false;
 
     // Call builder:OnStartBuild(target, "Repair")
     // FA Lua detects order=="Repair" and routes to OnStartRepair internally
@@ -1945,6 +2012,11 @@ void Unit::stop_repairing(lua_State* L, EntityRegistry& registry) {
     // Call builder:OnStopBuild(target) — FA handles OnStopRepair inside
     if (target_id != 0) {
         call_build_callback(L, "OnStopBuild", registry.find(target_id), "Repair");
+        // A source OnStopBuild can begin new work. Retiring the old repair
+        // must not erase that new task's inherited/script work item.
+        if (!destroyed() && repair_target_id_ == 0 && build_target_id_ == 0 &&
+            !enhancing_ && !is_capturing())
+            call_lua_method(L, "ClearWork");
     }
 }
 

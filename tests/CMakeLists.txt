@@ -41,6 +41,7 @@ add_executable(osc_tests
     test_manipulators.cpp
     test_patrol.cpp
     test_guard.cpp
+    test_guard_area_assist.cpp
     test_ground_attack.cpp
     test_primary_weapon_target.cpp
     test_command_feedback.cpp

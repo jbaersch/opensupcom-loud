@@ -367,19 +367,21 @@ static int unit_GetGuardedUnit(lua_State* L) {
     return 1;
 }
 
-// GetFocusUnit(): return the unit this unit is actively building/assisting/capturing
+// GetFocusUnit(): the unit focused by a build, repair, capture or reclaim task.
 static int unit_GetFocusUnit(lua_State* L) {
     auto* u = check_unit(L);
     if (!u) { lua_pushnil(L); return 1; }
 
     u32 focus_id = u->build_target_id();
+    if (focus_id == 0) focus_id = u->repair_target_id();
     if (focus_id == 0) focus_id = u->capture_target_id();
+    if (focus_id == 0) focus_id = u->reclaim_target_id();
     if (focus_id == 0) { lua_pushnil(L); return 1; }
 
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
     auto* target = sim->entity_registry().find(focus_id);
-    if (!target || target->destroyed() || target->lua_table_ref() < 0) {
+    if (!target || target->destroyed() || !target->is_unit() || target->lua_table_ref() < 0) {
         lua_pushnil(L);
         return 1;
     }

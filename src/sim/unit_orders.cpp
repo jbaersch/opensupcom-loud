@@ -1289,34 +1289,70 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
 OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
+    const u32 order_id = cmd.command_id;
+    const u32 target_id = cmd.target_id;
+    const auto current = [&] {
+        return !command_queue_.empty() && &command_queue_.front() == &cmd &&
+               command_queue_.front().command_id == order_id;
+    };
     // Whatever work this order started on its target ends with it: a repair,
     // or the build of one under construction.
     const auto let_go = [&] {
         if (is_repairing()) stop_repairing(L, registry);
-        if (build_target_id_ != 0 && build_target_id_ == cmd.target_id) {
+        if (!current()) return;
+        if (build_target_id_ != 0 && build_target_id_ == target_id) {
             stop_assisting(L, &registry);
         }
-        end_approach(cmd);
+        if (current()) end_approach(cmd);
+    };
+    const auto done = [&] {
+        let_go();
+        if (destroyed() || !in_registry()) return OrderStep::Gone;
+        if (current()) command_queue_.pop_front();
+        return OrderStep::Next;
     };
     if (cmd.target_id == 0) {
-        let_go();
-        command_queue_.pop_front();
-        return OrderStep::Next;
+        return done();
     }
     auto* rtarget = registry.find(cmd.target_id);
     if (!rtarget || rtarget->destroyed() || !rtarget->is_unit()) {
-        let_go();
-        command_queue_.pop_front();
-        return OrderStep::Next;
+        return done();
+    }
+    // Repair tasks also assist an enhancement or a silo work item. Keep
+    // its kind and identity in the existing serialized command blueprint
+    // lane: a replacement work item must retire the old inherited work.
+    const auto work_key = [](const Unit& target) {
+        if (target.is_enhancing()) return std::string("__osc_enhance:") + target.enhance_name();
+        if (target.silo_building()) {
+            const auto index = target.silo_build().weapon;
+            if (index >= 0 && static_cast<size_t>(index) < target.weapons().size())
+                return std::string("__osc_silo:") + target.weapons()[index]->projectile_bp_id;
+        }
+        return std::string();
+    };
+    const auto& subject = static_cast<const Unit&>(*rtarget);
+    const std::string active_work = work_key(subject);
+    bool inherited_work = cmd.blueprint_id.starts_with("__osc_enhance:") ||
+                          cmd.blueprint_id.starts_with("__osc_silo:");
+    if (inherited_work && cmd.blueprint_id != active_work) return done();
+    if (!active_work.empty() && subject.is_paused()) return done();
+    if (!inherited_work && !active_work.empty()) {
+        if (is_repairing()) stop_repairing(L, registry);
+        if (destroyed() || !in_registry()) return OrderStep::Gone;
+        if (!current()) return OrderStep::Next;
+        cmd.blueprint_id = active_work;
+        inherited_work = true;
     }
     // Already at full health? Done. (One under construction is built first.)
     const bool under_construction = static_cast<const Unit&>(*rtarget).is_being_built();
-    if (!under_construction && rtarget->health() >= rtarget->max_health() &&
+    if (!under_construction && !inherited_work && rtarget->health() >= rtarget->max_health() &&
         !static_cast<Unit*>(rtarget)->shield_needs_repair(registry, L)) {
-        let_go();
-        command_queue_.pop_front();
-        return OrderStep::Next;
+        return done();
     }
+    if (destroyed() || !in_registry()) return OrderStep::Gone;
+    if (!current()) return OrderStep::Next;
+    rtarget = registry.find(target_id);
+    if (!rtarget || rtarget->destroyed()) return done();
 
     // Reach: the gap to its skirt within MaxBuildDistance to begin,
     // twice that to go on (Moho's CUnitRepairTask). Out of reach, the
@@ -1330,8 +1366,7 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
         if (!working) {
             if (!cmd.approached && gap > max_build_distance_) {
                 if (effective_speed() <= 0) {
-                    command_queue_.pop_front();
-                    return OrderStep::Next;
+                    return done();
                 }
                 cmd.approached = true;
                 set_path_goal(approach_point(*this, rtarget->position(),
@@ -1341,14 +1376,10 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
             }
             if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
             if (gap > max_build_distance_) {
-                let_go();
-                command_queue_.pop_front();
-                return OrderStep::Next;
+                return done();
             }
         } else if (gap > 2 * max_build_distance_) {
-            let_go();
-            command_queue_.pop_front();
-            return OrderStep::Next;
+            return done();
         }
     }
     navigator_.abort_move();
@@ -1366,18 +1397,54 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
         }
+        if (!current()) return OrderStep::Next;
         if (turns_to_face(at) || awaits_arm() || waits_out_task(cmd) || waits_paused(cmd)) {
             return OrderStep::Hold;
         }
         if (!start_repair(cmd, registry, L)) {
-            command_queue_.pop_front();
+            if (destroyed() || !in_registry()) return OrderStep::Gone;
+            if (current()) command_queue_.pop_front();
             return OrderStep::Next;
         }
+    }
+    if (destroyed() || !in_registry()) return OrderStep::Gone;
+    if (!current()) return OrderStep::Next;
+
+    if (inherited_work) {
+        auto* entity = registry.find(target_id);
+        if (!entity || entity->destroyed() || !entity->is_unit()) return done();
+        auto& target = static_cast<Unit&>(*entity);
+        if (work_key(target) != cmd.blueprint_id || target.is_paused()) return done();
+        if (paused_) return OrderStep::Hold;
+        // A changed work identity retires this task above. Preserve the
+        // helper's source-computed drain (its own adjacency/maintenance),
+        // rather than deriving it from the subject's combined consumption.
+        if (target.is_enhancing()) {
+            if (target.build_rate() <= 0 || target.enhance_build_time_ <= 0) return done();
+            repair_build_time_ = target.enhance_build_time_;
+        } else repair_build_time_ = target.silo_build().build_time;
+        if (repair_build_time_ <= 0) return done();
+        if (target.is_enhancing()) {
+            target.set_work_progress(std::min(1.0f, target.work_progress() +
+                static_cast<f32>(build_rate_ * dt / repair_build_time_) * econ_eff));
+            if (target.lua_table_ref() >= 0) {
+                lua_rawgeti(L, LUA_REGISTRYINDEX, target.lua_table_ref());
+                lua_pushstring(L, "WorkProgress");
+                lua_pushnumber(L, target.work_progress());
+                lua_rawset(L, -3);
+                lua_pop(L, 1);
+            }
+        } else {
+            target.assist_silo_build(build_rate_, dt, econ_eff);
+        }
+        // Its own enhancement/silo task owns completion and callbacks.
+        return OrderStep::Hold;
     }
 
     // Progress repair
     if (!progress_repair(dt, registry, L, econ_eff)) {
-        command_queue_.pop_front();
+        if (destroyed() || !in_registry()) return OrderStep::Gone;
+        if (current()) command_queue_.pop_front();
         return OrderStep::Next;
     }
     return OrderStep::Hold;
@@ -1637,10 +1704,136 @@ std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarde
     return OrderStep::Next;
 }
 
+namespace {
+
+// CUnitGuardTask::SelectAssistOrCaptureCandidateUnit (0x00613110):
+// a box about the guard point, ranked by the worker's 3-D distance to a
+// candidate's focus unit or the candidate's own work. There is no global
+// preference for construction over a nearer damaged unit.
+Unit* point_guard_work(Unit& worker, const UnitCommand& guard, SimContext& ctx) {
+    if (!ctx.sim || worker.build_rate() <= 0) return nullptr;
+    const bool rebuilder = worker.has_category("REBUILDER");
+    if (!rebuilder && !worker.has_category("REPAIR")) return nullptr;
+    const f32 radius = worker.guard_scan_radius();
+    const auto candidates = ctx.registry.units_in_rect(
+        guard.target_pos.x - radius, guard.target_pos.z - radius,
+        guard.target_pos.x + radius, guard.target_pos.z + radius);
+    u32 best_id = 0;
+    f32 best_distance = std::numeric_limits<f32>::infinity();
+    for (Entity* entity : candidates) {
+        auto& candidate = static_cast<Unit&>(*entity);
+        if (&candidate == &worker || candidate.destroyed() || candidate.is_dying() ||
+            candidate.is_air_unit() || candidate.velocity().x != 0 ||
+            candidate.velocity().y != 0 || candidate.velocity().z != 0)
+            continue;
+        const Vector3 at = candidate.position();
+        if (ctx.terrain) {
+            f32 x0 = 0, z0 = 0;
+            f32 x1 = static_cast<f32>(ctx.terrain->map_width());
+            f32 z1 = static_cast<f32>(ctx.terrain->map_height());
+            const auto* brain = ctx.sim->get_army(worker.army());
+            if (ctx.sim->has_playable_rect() && !(brain && brain->use_whole_map())) {
+                x0 = ctx.sim->playable_x0();
+                z0 = ctx.sim->playable_z0();
+                x1 = ctx.sim->playable_x1();
+                z1 = ctx.sim->playable_z1();
+            }
+            if (at.x < x0 + 1 || at.z < z0 + 1 || at.x > x1 - 1 || at.z > z1 - 1)
+                continue;
+        }
+        if (rebuilder) {
+            bool anchored = false;
+            for (const auto& order : worker.command_queue()) {
+                if (order.type != CommandType::Guard) continue;
+                const Entity* target = ctx.registry.find(order.target_id);
+                const Vector3 point = target && !target->destroyed() ? target->position()
+                                                                   : order.target_pos;
+                const f32 dx = point.x - at.x, dz = point.z - at.z;
+                if (dx * dx + dz * dz < 1e-6f) {
+                    anchored = true;
+                    break;
+                }
+            }
+            if (!anchored) continue;
+        } else if (candidate.army() != worker.army() &&
+                   !ctx.sim->is_ally(worker.army(), candidate.army())) {
+            continue;
+        }
+        u32 focus = candidate.focus_entity_id();
+        if (focus == 0) focus = candidate.build_target_id();
+        if (focus == 0) focus = candidate.repair_target_id();
+        if (focus == 0) focus = candidate.capture_target_id();
+        if (focus == 0) focus = candidate.reclaim_target_id();
+        Entity* focus_entity = ctx.registry.find(focus);
+        // The native area branch takes any unit focus here. Its separate
+        // tracked-unit branch filters reclaiming/healthy focus; applying
+        // that filter here would change the original area's selection.
+        Unit* work = focus_entity && !focus_entity->destroyed() && focus_entity->is_unit()
+                         ? static_cast<Unit*>(focus_entity)
+                         : nullptr;
+        if (!work) {
+            const bool needs_work =
+                candidate.is_being_built() || candidate.health() < candidate.max_health() ||
+                candidate.shield_needs_repair(ctx.registry, ctx.L) ||
+                (!candidate.is_paused() &&
+                 (candidate.is_enhancing() || candidate.silo_building()));
+            if (worker.destroyed() || !worker.in_registry()) return nullptr;
+            if (!needs_work || candidate.destroyed() ||
+                ctx.registry.find(candidate.entity_id()) != &candidate)
+                continue;
+            work = &candidate;
+        }
+        if (work->is_dying()) continue;
+        const f32 dx = work->position().x - worker.position().x;
+        const f32 dy = work->position().y - worker.position().y;
+        const f32 dz = work->position().z - worker.position().z;
+        const f32 distance = dx * dx + dy * dy + dz * dz;
+        // The spatial query is in id order, preserving deterministic ties.
+        if (distance < best_distance) {
+            best_distance = distance;
+            best_id = work->entity_id();
+        }
+    }
+    Entity* best = ctx.registry.find(best_id);
+    return best && !best->destroyed() && best->is_unit() &&
+                   !static_cast<Unit*>(best)->is_dying()
+               ? static_cast<Unit*>(best)
+               : nullptr;
+}
+
+} // namespace
+
 OrderStep Unit::order_guard_point(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // A place to guard (IssueGuard at a position): Moho's guard task with
     // no guarded unit, its reference the point.
+    const bool scan = cmd.patrol_scan <= 0;
+    const bool reacts = guard_reacts(nullptr);
     if (const auto step = guard_engage(cmd, nullptr, cmd.target_pos, dt, ctx)) return *step;
+    if (!reacts) {
+        if (scan) cmd.patrol_scan = 5;
+        else --cmd.patrol_scan;
+    }
+    if (scan) {
+        const u32 order_id = cmd.command_id;
+        Unit* work = point_guard_work(*this, cmd, ctx);
+        if (destroyed() || !in_registry()) return OrderStep::Gone;
+        if (command_queue_.empty() || &command_queue_.front() != &cmd ||
+            command_queue_.front().command_id != order_id)
+            return OrderStep::Next;
+        if (work) {
+            UnitCommand task;
+            task.type = work->army() == army() || ctx.sim->is_ally(army(), work->army())
+                            ? CommandType::Repair
+                            : CommandType::Capture;
+            task.target_id = work->entity_id();
+            task.target_pos = work->position();
+            task.command_id = order_id;
+            task.from_guard = true;
+            navigator_.abort_move();
+            command_queue_.push_front(std::move(task));
+            return OrderStep::Next;
+        }
+    }
     // A hovering aircraft with nothing to do flies as a winged one, hunting
     // round its point rather than hanging still (flies_winged_on_guard).
     if (flies_winged_on_guard(*this) && ctx.sim) {
