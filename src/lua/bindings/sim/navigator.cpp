@@ -179,6 +179,7 @@ const MethodEntry navigator_methods[] = {
     {"SetSpeedThroughGoal",     nav_SetSpeedThroughGoal},
     {"SetGoal",                 nav_SetGoal},
     {"GetGoal",                 nav_GetGoal},
+    {"GetGoalPos",              nav_GetGoal},
     {"AbortMove",               nav_AbortMove},
     {nullptr, nullptr},
 };
