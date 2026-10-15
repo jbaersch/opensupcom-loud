@@ -62,6 +62,8 @@ extern "C" {
 namespace osc::lua {
 
 namespace {
+void select_by_category(lua_State* L, const std::vector<std::string>& args);
+
 // Headless (no renderer) the camera methods answer with the renderer
 // camera's defaults, so UI scripts run the same in tests.
 // A 1024 map's farthest zoom at 4:3 (the renderer camera's defaults)
@@ -1219,6 +1221,22 @@ static int l_GetSelectedUnits(lua_State* L) {
     return 1;
 }
 
+/// UISelectionByCategory(expression, addToCurSel, inViewFrustum,
+/// nearestToMouse, mustBeIdle): the Lua entry point to the same selection
+/// operation as UI_SelectByCategory. UI mods enumerate the focused army
+/// through it, then restore the player's selection with SelectUnits.
+static int l_UISelectionByCategory(lua_State* L) {
+    const char* expression = luaL_checkstring(L, 1);
+    std::vector<std::string> args{"UI_SelectByCategory"};
+    if (lua_toboolean(L, 2)) args.emplace_back("+add");
+    if (lua_toboolean(L, 3)) args.emplace_back("+inview");
+    if (lua_toboolean(L, 4)) args.emplace_back("+nearest");
+    if (lua_toboolean(L, 5)) args.emplace_back("+idle");
+    args.emplace_back(expression);
+    select_by_category(L, args);
+    return 0;
+}
+
 // --- Build templates (Moho's CWldSession::GenerateBuildTemplates & co) ---
 
 /// GenerateBuildTemplateFromSelection(): the selected structures (standing,
@@ -1928,6 +1946,7 @@ void register_user_bindings(LuaState& state) {
     state.register_function("ClearBuildTemplates", l_ClearBuildTemplates);
     set_ui_wait_hook(L, ui_wait_camera); // WaitFor(camera) (M217g)
     state.register_function("GetSelectedUnits", l_GetSelectedUnits);
+    state.register_function("UISelectionByCategory", l_UISelectionByCategory);
     state.register_function("SelectUnits", l_SelectUnits);
     state.register_function("AddSelectUnits", l_AddSelectUnits);
     state.register_function("SimCallback", l_SimCallback);
