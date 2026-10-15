@@ -5,7 +5,10 @@
 #include "renderer/minimap_renderer.hpp"
 #include "renderer/recon_view.hpp"
 #include "renderer/texture_cache.hpp"
+#include "renderer/unit_renderer.hpp"
 #include "sim/world_snapshot.hpp"
+
+#include <spdlog/spdlog.h>
 
 #include <lua.h>
 
@@ -14,6 +17,7 @@
 #include <cmath>
 #include <cstring>
 #include <iterator>
+#include <limits>
 
 namespace osc::renderer {
 
@@ -38,22 +42,48 @@ static void get_army_color(const sim::EntityRecord& entity, const sim::FrameView
 }
 
 void StrategicIconRenderer::init(VkDevice /*device*/, VmaAllocator allocator) {
+    allocator_ = allocator;
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) reserve_instances(i, kInitialIconQuads);
+}
+
+bool StrategicIconRenderer::reserve_instances(u32 fi, u32 need) {
+    if (need <= instance_capacity_[fi]) return true;
+    if (!allocator_) return false; // CPU-only quad inspection has no GPU allocation.
+    const u32 capacity =
+        grown_capacity(instance_capacity_[fi], need, std::numeric_limits<u32>::max());
     VkBufferCreateInfo buf_info{};
     buf_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    buf_info.size = MAX_ICON_QUADS * sizeof(UIInstance);
+    buf_info.size = static_cast<VkDeviceSize>(capacity) * sizeof(UIInstance);
     buf_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
 
     VmaAllocationCreateInfo alloc_info{};
     alloc_info.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-    alloc_info.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    alloc_info.flags =
+        VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
     alloc_info.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
-    for (u32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
-        VmaAllocationInfo info{};
-        vmaCreateBuffer(allocator, &buf_info, &alloc_info,
-                        &instance_buf_[i].buffer, &instance_buf_[i].allocation, &info);
-        instance_mapped_[i] = info.pMappedData;
+    AllocatedBuffer grown{};
+    VmaAllocationInfo info{};
+    if (vmaCreateBuffer(allocator_, &buf_info, &alloc_info, &grown.buffer, &grown.allocation,
+                        &info) == VK_SUCCESS &&
+        info.pMappedData) {
+        // Renderer waited for this slot's fence before updating it. The
+        // other in-flight slot retains its own buffer until its next use.
+        if (instance_buf_[fi].buffer)
+            vmaDestroyBuffer(allocator_, instance_buf_[fi].buffer, instance_buf_[fi].allocation);
+        instance_buf_[fi] = grown;
+        instance_mapped_[fi] = info.pMappedData;
+        instance_capacity_[fi] = capacity;
+        return true;
     }
+    if (grown.buffer) vmaDestroyBuffer(allocator_, grown.buffer, grown.allocation);
+    if (!warned_full_) {
+        spdlog::warn(
+            "StrategicIconRenderer: {} quads requested, buffer holds {}; allocation failed", need,
+            instance_capacity_[fi]);
+        warned_full_ = true;
+    }
+    return false;
 }
 
 void StrategicIconRenderer::destroy(VkDevice /*device*/, VmaAllocator allocator) {
@@ -63,7 +93,11 @@ void StrategicIconRenderer::destroy(VkDevice /*device*/, VmaAllocator allocator)
                              instance_buf_[i].allocation);
         instance_buf_[i] = {};
         instance_mapped_[i] = nullptr;
+        instance_capacity_[i] = 0;
     }
+    allocator_ = nullptr;
+    uploaded_quad_count_ = 0;
+    warned_full_ = false;
 }
 
 // --- Procedural icon atlas generation ---
@@ -314,7 +348,6 @@ UIInstance StrategicIconRenderer::icon_quad(f32 x, f32 y, const GPUTexture& tex,
 
 void StrategicIconRenderer::emit_icon(f32 x, f32 y, const std::string& path, const GPUTexture& tex,
                                       f32 r, f32 g, f32 b) {
-    if (quad_count_ >= MAX_ICON_QUADS) return;
     quads_.push_back(icon_quad(x, y, tex, r, g, b, icon_scale_));
     quad_textures_.push_back(path);
     if (groups_.empty() || groups_.back().ds != tex.descriptor_set)
@@ -680,7 +713,7 @@ void StrategicIconRenderer::append_formation_icon(const sim::Vector3& position,
                                                   const std::array<f32, 16>& vp, u32 viewport_w,
                                                   u32 viewport_h) {
     if (!strategic_zoom_active_ || !nis_icons_ || path.empty() || texture.width == 0 ||
-        texture.height == 0 || viewport_w == 0 || viewport_h == 0 || quad_count_ >= MAX_ICON_QUADS)
+        texture.height == 0 || viewport_w == 0 || viewport_h == 0)
         return;
     f32 x = 0, y = 0;
     const f32 width = static_cast<f32>(viewport_w);
@@ -706,6 +739,7 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
     projectile_icons_.clear();
     groups_.clear();
     quad_count_ = 0;
+    uploaded_quad_count_ = 0;
     load_generic_icons(L);
 
     const f32 cam_dist = camera.eye_distance();
@@ -730,7 +764,6 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
         // are preview positions rather than world entities.
         if (strategic_zoom_active_) {
             for (const FormationGhost& ghost : formation) {
-                if (quad_count_ >= MAX_ICON_QUADS) break;
                 const IconBlueprint& bp = icon_blueprint(ghost.blueprint_id, L);
                 if (bp.rest.empty()) continue;
                 if (const GPUTexture* texture = tex_cache.get(bp.rest))
@@ -742,9 +775,6 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
     if (camera.zoom() >= kStrategicProjectileLod) {
         VkDescriptorSet white = tex_cache.fallback_descriptor();
         const auto square = [&](const UIInstance& inst) {
-            if (quad_count_ >= MAX_ICON_QUADS) {
-                return;
-            }
             quads_.push_back(inst);
             quad_textures_.emplace_back();
             if (groups_.empty() || groups_.back().ds != white) {
@@ -773,9 +803,13 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
     }
 
     // Upload to GPU
-    if (!quads_.empty() && instance_mapped_[fi_]) {
-        const u32 count = std::min(quad_count_, MAX_ICON_QUADS);
-        std::memcpy(instance_mapped_[fi_], quads_.data(), count * sizeof(UIInstance));
+    if (!quads_.empty()) {
+        reserve_instances(fi_, quad_count_);
+        if (instance_mapped_[fi_]) {
+            uploaded_quad_count_ = bounded_quad_count(0, quad_count_, instance_capacity_[fi_]);
+            std::memcpy(instance_mapped_[fi_], quads_.data(),
+                        static_cast<size_t>(uploaded_quad_count_) * sizeof(UIInstance));
+        }
     }
     return strategic_zoom_active_;
 }
@@ -822,7 +856,7 @@ void StrategicIconRenderer::paint_map(const sim::FrameView& view, const MapArea&
 
 void StrategicIconRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w,
                                    u32 viewport_h) {
-    if (quad_count_ == 0) return;
+    if (uploaded_quad_count_ == 0) return;
 
     f32 vp[2] = {static_cast<f32>(viewport_w), static_cast<f32>(viewport_h)};
     vkc::push_constants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 2, vp);
@@ -837,8 +871,8 @@ void StrategicIconRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
 
     // A run of icons per texture, in the order they were collected.
     for (const Group& g : groups_) {
-        if (!g.ds || g.first >= MAX_ICON_QUADS) continue;
-        const u32 count = std::min(g.count, MAX_ICON_QUADS - g.first);
+        const u32 count = bounded_quad_count(g.first, g.count, uploaded_quad_count_);
+        if (!g.ds || count == 0) continue;
         vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &g.ds, 0,
                                   nullptr);
         vkc::draw(cmd, 6, count, 0, g.first);

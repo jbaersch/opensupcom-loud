@@ -6,6 +6,7 @@
 #include "core/types.hpp"
 #include "sim/game_colors.hpp"
 
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <span>
@@ -130,6 +131,14 @@ public:
     f32 glow_time() const { return glow_time_; }
 
     u32 quad_count() const { return quad_count_; }
+    /// The current frame's real GPU upload, which may be shorter only if
+    /// allocation failed. Buffers grow independently after their fences.
+    u32 uploaded_quad_count() const { return uploaded_quad_count_; }
+    u32 instance_capacity(u32 fi) const { return instance_capacity_[fi]; }
+    /// Bound an upload or draw range without overflowing first + count.
+    static u32 bounded_quad_count(u32 first, u32 count, u32 available) {
+        return first < available ? std::min(count, available - first) : 0;
+    }
     bool is_strategic_zoom() const { return strategic_zoom_active_; }
     /// ui_AlwaysRenderStrategicIcons (M217i): icons at every zoom, over the
     /// meshes, past no IconFadeInZoom.
@@ -169,7 +178,7 @@ public:
     static constexpr f32 kStrategicProjectileLod = 128.0f;
     /// Where FA's strategic icon textures live (REntityBlueprint).
     static constexpr const char* kIconDirectory = "/textures/ui/common/game/strategicicons/";
-    static constexpr u32 MAX_ICON_QUADS = 4096;
+    static constexpr u32 kInitialIconQuads = 4096;
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
     /// Classify a unit into an icon type based on its categories.
@@ -245,6 +254,11 @@ private:
 
     AllocatedBuffer instance_buf_[FRAMES_IN_FLIGHT] = {};
     void* instance_mapped_[FRAMES_IN_FLIGHT] = {};
+    u32 instance_capacity_[FRAMES_IN_FLIGHT] = {};
+    VmaAllocator allocator_ = nullptr;
+    u32 uploaded_quad_count_ = 0;
+    bool warned_full_ = false;
+    bool reserve_instances(u32 fi, u32 need);
     u32 fi_ = 0;
 
     std::vector<UIInstance> quads_;

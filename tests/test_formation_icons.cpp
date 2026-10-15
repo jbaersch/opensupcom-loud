@@ -4,6 +4,7 @@
 #include "renderer/camera.hpp"
 #include "renderer/strategic_icon_renderer.hpp"
 #include "renderer/texture_cache.hpp"
+#include "renderer/unit_renderer.hpp"
 #include "sim/world_snapshot.hpp"
 
 #include <array>
@@ -84,7 +85,7 @@ TEST_CASE("Formation icons preserve zoom, NIS and icon-scale controls",
     CHECK(w.icons.icon_scale() == 1.5f);
 }
 
-TEST_CASE("Formation icons reject invisible slots and respect quad capacity",
+TEST_CASE("Formation icons reject invisible slots and retain quads past the initial capacity",
           "[formation][strategic-icons]") {
     FormationIcons w;
     w.frame();
@@ -98,8 +99,49 @@ TEST_CASE("Formation icons reject invisible slots and respect quad capacity",
     w.append();
     CHECK(w.icons.quads().empty());
     w.ready.width = 32;
-    for (unsigned i = 0; i != w.icons.MAX_ICON_QUADS + 1; ++i) w.append();
-    CHECK(w.icons.quads().size() == w.icons.MAX_ICON_QUADS);
-    CHECK(w.icons.quad_textures().size() == w.icons.MAX_ICON_QUADS);
-    CHECK(w.icons.quad_count() == w.icons.MAX_ICON_QUADS);
+    constexpr auto count = osc::renderer::StrategicIconRenderer::kInitialIconQuads + 1;
+    for (unsigned i = 0; i != count; ++i) w.append();
+    CHECK(w.icons.quads().size() == count);
+    CHECK(w.icons.quad_textures().size() == count);
+    CHECK(w.icons.quad_count() == count);
+}
+
+TEST_CASE("Strategic icon uploads and draw ranges stay inside the allocated slot",
+          "[strategic-icons][strategic-icon-capacity]") {
+    using Icons = osc::renderer::StrategicIconRenderer;
+    const auto grown =
+        osc::renderer::grown_capacity(4096, 6400, std::numeric_limits<osc::u32>::max());
+    REQUIRE(grown >= 6400);
+    CHECK(Icons::bounded_quad_count(0, 6400, grown) == 6400);
+    CHECK(Icons::bounded_quad_count(0, 6400, 4096) == 4096); // Failed growth keeps the old buffer.
+    CHECK(Icons::bounded_quad_count(6300, 200, 6400) == 100);
+    CHECK(Icons::bounded_quad_count(6400, 200, 6400) == 0);
+    CHECK(Icons::bounded_quad_count(0, 6400, 0) == 0);
+    CHECK(Icons::bounded_quad_count(std::numeric_limits<osc::u32>::max() - 1,
+                                    std::numeric_limits<osc::u32>::max(),
+                                    std::numeric_limits<osc::u32>::max()) == 1);
+    FormationIcons w;
+    w.frame();
+    w.append();
+    CHECK(w.icons.uploaded_quad_count() == 0); // CPU-only data is never bound as a GPU upload.
+    CHECK(w.icons.instance_capacity(0) == 0);
+    CHECK(w.icons.instance_capacity(1) == 0);
+}
+
+TEST_CASE("Strategic preview quads retain a visible fleet larger than the initial icon buffer",
+          "[formation][strategic-icons][strategic-icon-capacity]") {
+    FormationIcons w;
+    w.frame();
+    w.icons.set_icon_scale(1.5f);
+    constexpr unsigned fleet = 6400;
+    for (unsigned i = 0; i < fleet; ++i) w.append();
+    REQUIRE(w.icons.quads().size() == fleet);
+    CHECK(w.icons.quad_textures().size() == fleet);
+    CHECK(w.icons.quad_count() == fleet);
+    CHECK(w.icons.quads().back().rect[2] == 48);
+    CHECK(w.icons.quads().back().rect[3] == 36);
+    w.append({3, 0, 0});
+    CHECK(w.icons.quad_count() == fleet);
+    w.frame();
+    CHECK(w.icons.quads().empty());
 }
