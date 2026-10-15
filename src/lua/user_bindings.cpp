@@ -22,6 +22,7 @@
 #include "renderer/renderer.hpp"
 #include "renderer/terrain_preview.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/build_placement.hpp"
 #include "sim/category_expr.hpp"
 #include "sim/lua_bytes.hpp"
 #include "sim/sim_callback_queue.hpp"
@@ -31,6 +32,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/waitable.hpp"
+#include "sim/work_range.hpp"
 #include "ui/console.hpp"
 #include "ui/key_codes.hpp"
 #include "ui/ui_control.hpp"
@@ -2555,6 +2557,12 @@ void cheat_create_unit(lua_State* L, const std::vector<std::string>& args) {
     sim::Vector3 at;
     if (!view->get_mouse_world_pos(static_cast<f32>(sx), static_cast<f32>(sy), at.x, at.y, at.z))
         return;
+    // The console CreateUnit path snaps to the blueprint's footprint
+    // before spawning, just like normal build placement. Scripted
+    // CreateUnit/HPR calls retain their explicitly supplied positions.
+    const auto [fx, fz] = sim::blueprint_footprint_cells(L, args[1]);
+    sim::snap_structure_center(at.x, at.z, fx, fz);
+    if (view->terrain()) at.y = view->terrain()->get_surface_height(at.x, at.z);
     sim::SimCallbackEntry entry;
     entry.func_name = sim::kCheatCreateUnitCallback;
     entry.args = {{"Blueprint", args[1]}, {"Army", army}, {"X", f64(at.x)},

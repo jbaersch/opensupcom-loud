@@ -6,6 +6,7 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/user_bindings.hpp"
 #include "renderer/renderer.hpp"
+#include "sim/build_placement.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/console.hpp"
@@ -49,6 +50,7 @@ struct CheatConsole {
         REQUIRE(lua.do_string(R"(
             PopupCalls = 0
             PopupOpen = false
+            __blueprints = {test_unit = {Footprint = {SizeX = 2, SizeZ = 2}}}
             function import(path)
                 assert(path == '/lua/ui/dialogs/createunit.lua')
                 return {CreateDialog = function(x, y)
@@ -168,4 +170,30 @@ TEST_CASE("Source cheat dialog failures keep their diagnosis and fail test modes
     const auto messages = osc::test_status::failure_messages();
     REQUIRE(messages.size() == 1);
     CHECK(messages.front().find("source popup sentinel") != std::string::npos);
+}
+
+TEST_CASE("Cheat-created footprints share the normal building grid", "[cheat][cheat-grid]") {
+    CheatConsole w;
+    w.cheats(true);
+    REQUIRE(w.lua.do_string(R"(
+        __blueprints.test_factory = {Footprint = {SizeX = 5, SizeZ = 5}}
+    )").ok());
+    float x = 0, y = 0;
+    REQUIRE(w.view.project(211.1239f, 0, 291.7166f, x, y));
+    w.console.execute(w.lua.raw(), "CreateUnit test_factory 0 " + std::to_string(x) + " " +
+                                   std::to_string(y));
+    auto queued = w.callbacks.drain();
+    REQUIRE(queued.size() == 1);
+    const auto& request = queued.front();
+    const auto wx = std::get<double>(request.args.at("X"));
+    const auto wz = std::get<double>(request.args.at("Z"));
+    CHECK(wx == 211.5);
+    CHECK(wz == 291.5);
+    // An eight-cell pad on the same odd footprint can touch its neighbour
+    // exactly, whether the first building was created or normally built.
+    const auto factory = osc::sim::StructureSite::of(wx, wz, 5, 5, 8, 8, -1.5f, -1.5f);
+    const auto neighbour = osc::sim::StructureSite::of(219.5f, 291.5f, 5, 5, 8, 8, -1.5f, -1.5f);
+    CHECK(factory.x1 == neighbour.x0);
+    CHECK(factory.z0 == neighbour.z0);
+    CHECK(factory.z1 == neighbour.z1);
 }
