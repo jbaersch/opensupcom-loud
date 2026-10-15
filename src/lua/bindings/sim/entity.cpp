@@ -1165,6 +1165,7 @@ const MethodEntry entity_methods[] = {
     {"GetBlueprint",        entity_GetBlueprint},
     {"GetFractionComplete", entity_GetFractionComplete},
     {"Destroy",             entity_Destroy},
+    {"Kill",                entity_Kill},
     {"BeenDestroyed",       entity_BeenDestroyed},
     // Any entity: retail units loop their ambient sounds on attached
     // helper entities (Unit.PlayUnitAmbientSound).

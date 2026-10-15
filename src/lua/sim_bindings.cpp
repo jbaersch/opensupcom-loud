@@ -1406,7 +1406,10 @@ static int l_Damage(lua_State* L) {
     }
     lua_pushvalue(L, dtype_idx); // damageType
     if (lua_pcall(L, 5, 0, 0) != 0) {
-        spdlog::warn("OnDamage error: {}", lua_tostring(L, -1));
+        const char* err = lua_tostring(L, -1);
+        const std::string message = std::string("OnDamage error: ") + (err ? err : "(unknown)");
+        spdlog::warn("{}", message);
+        if (test_status::count_lua_failures()) test_status::record_failure(message);
         lua_pop(L, 1);
     }
     return 0;
