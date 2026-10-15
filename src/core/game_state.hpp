@@ -122,12 +122,44 @@ inline void push_uimain_function(lua_State* L, const char* name) {
 inline void push_setup_ui(lua_State* L) { push_uimain_function(L, "SetupUI"); }
 
 inline void call_setup_ui(lua_State* L) {
+    // The options framework owns runtime UI settings, including LOUD's
+    // menu animation factor. Run its callbacks before any menu is built,
+    // once for each fresh user state (also in offscreen/headless runs).
+    const int top = lua_gettop(L);
+    constexpr const char* initialized = "__osc_ui_options_initialized";
+    lua_pushstring(L, initialized);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const bool applied = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    if (!applied) {
+        push_imported_function(L, "/lua/options/optionsLogic.lua", "Apply");
+        if (lua_isfunction(L, -1)) {
+            lua_pushboolean(L, 1);
+            if (lua_pcall(L, 1, 0, 0) != 0) {
+                const char* err = lua_tostring(L, -1);
+                spdlog::warn("UI options startup error: {}", err ? err : "(unknown)");
+                if (auto* harness = osc::lua::SmokeTestHarness::active_instance())
+                    harness->record(osc::lua::SmokeCategory::PcallError, err ? err : "(unknown)",
+                                    "optionsLogic.Apply");
+                lua_settop(L, top);
+                return;
+            }
+            lua_pushstring(L, initialized);
+            lua_pushboolean(L, 1);
+            lua_rawset(L, LUA_REGISTRYINDEX);
+        } else {
+            lua_pop(L, 1);
+        }
+    }
     push_setup_ui(L);
-    if (!lua_isfunction(L, -1)) { lua_pop(L, 1); return; }
+    if (!lua_isfunction(L, -1)) {
+        lua_settop(L, top);
+        return;
+    }
     if (lua_pcall(L, 0, 0, 0) != 0) {
         spdlog::warn("SetupUI error: {}", lua_tostring(L, -1));
-        lua_pop(L, 1);
     }
+    lua_settop(L, top);
 }
 /// uimain.StartGameUI: Moho calls it when a world session starts; it
 /// creates the Lua WldUIProvider (gamemain.CreateWldUIProvider), which the

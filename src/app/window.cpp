@@ -90,9 +90,8 @@ std::optional<int> App::Window::set_up() {
     input_handler.set_recon(&renderer.recon()); // clicks pick what it shows
 
     publish_window_objects();
-    // The saved options, as Moho applies them once the window is up
-    // (OPTIONS_Apply, M217i). Captures and checks keep the engine's own.
-    if (!offscreen_capture) apply_options(ui_lua_state.raw());
+    // Startup options already ran before the first UI. Publishing the
+    // window replays the convars that were held before the renderer existed.
     // Moho's /nomusic: its audio engine starts with Music at 0.
     if (std::any_of(opt.cmdline_args.begin(), opt.cmdline_args.end(), [](const std::string& a) {
             return a.size() == 8 && std::equal(a.begin(), a.end(), "/nomusic", [](char x, char y) {

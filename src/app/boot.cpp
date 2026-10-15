@@ -516,6 +516,11 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
 }
 
 std::optional<int> App::boot_ui() {
+    // Startup option callbacks use ConExecute before the first menu and
+    // before a renderer exists. Their values are held until it is ready.
+    osc::lua::register_console_commands(console);
+    osc::lua::register_session_console_commands(console);
+    register_option_commands(console, held_convars, range_overlays);
     // What outlives every UI state: localization, preferences, the user's
     // special files.
     loc_cache.load_from_vfs(ui_lua_state.raw(), &vfs);
@@ -562,6 +567,7 @@ std::optional<int> App::boot_ui() {
     // headless test mode keeps a bare one, as the front end's.
     const bool game_ui = !opt.map_path.empty() && (!opt.headless || request.world_ui);
     if (auto code = init_ui_state(game_ui ? &game_setup.mods : nullptr)) return code;
+    publish_session_objects();
 
     // State transition: INIT → GAME or INIT → FRONT_END
     if (!opt.map_path.empty()) {
@@ -800,9 +806,6 @@ std::optional<int> App::start() {
     publish_session_objects();
     // Moho's IN_InitKeyHandler: retail's key names and default mappings,
     // once; the key map outlives each UI state.
-    osc::lua::register_console_commands(console);
-    osc::lua::register_session_console_commands(console);
-    register_option_commands(console, held_convars, range_overlays);
     osc::lua::load_key_mappings(ui_lua_state.raw(), keymap_registry);
     // SetupUI already ran during the UI state's boot above; the initial
     // transitions pass nullptr so it does not run a second time.
