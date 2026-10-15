@@ -1630,7 +1630,7 @@ void IntegrationModes::headless(Engine& e) {
                 assert(type(t) == 'number', 'GetGameTimeSeconds failed')
                 assert(type(tick) == 'number', 'GameTick failed')
                 assert(type(gt) == 'string', 'GetGameTime should return string')
-                assert(rate == 10, 'GetSimRate should be 10')
+                assert(rate == GetGameSpeed(), 'GetSimRate should report the applied speed level')
                 print('M145: Time queries OK (t=' .. t .. ' tick=' .. tick .. ' gt=' .. gt .. ')')
             )");
             if (r.ok()) {

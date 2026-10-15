@@ -735,8 +735,10 @@ TEST_CASE("A lobby's game has the speed its lobby set; players change it, observ
     REQUIRE(osc::lua::mp_attach_session(w.sim));
     REQUIRE(w.run(R"(
         assert(GetGameSpeed() == 4, GetGameSpeed())
+        assert(GetSimRate() == 4, GetSimRate())
         SetGameSpeed(7)
         assert(GetGameSpeed() == 4, 'fixed')
+        assert(GetSimRate() == 4, 'fixed UI speed')
     )"));
     osc::lua::pump_speed_changes(w.state.raw());
     REQUIRE(w.run("assert(table.getn(__heard) == 0, 'nothing changed')"));
@@ -747,8 +749,11 @@ TEST_CASE("A lobby's game has the speed its lobby set; players change it, observ
     REQUIRE(osc::lua::mp_attach_session(w.sim));
     REQUIRE(w.run(R"(
         assert(GetGameSpeed() == 0, GetGameSpeed())
+        assert(GetSimRate() == 0, GetSimRate())
         SetGameSpeed(3)
         assert(GetGameSpeed() == 3, GetGameSpeed())
+        assert(GetSimRate() == 3, GetSimRate())
+        assert(table.getn(__heard) == 0, 'notify only after applied speed is pumped')
     )"));
     osc::lua::pump_speed_changes(w.state.raw());
     REQUIRE(w.run("assert(table.getn(__heard) == 1 and __heard[1] == '1:3', __heard[1])"));
@@ -758,6 +763,7 @@ TEST_CASE("A lobby's game has the speed its lobby set; players change it, observ
     REQUIRE(w.run(R"(
         SetGameSpeed(8)
         assert(GetGameSpeed() == 3, 'an observer asked')
+        assert(GetSimRate() == 3, 'observer cannot change the UI speed')
     )"));
 }
 

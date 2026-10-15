@@ -146,7 +146,8 @@ TEST_CASE("Key chords parse and bind as Moho's CUIKeyHandler", "[ui][keymap]") {
     CHECK(km.size() == 0);
 }
 
-TEST_CASE("The sim rate: an integer game speed, 10^(rate/10) times normal", "[ui][console]") {
+TEST_CASE("The sim rate: an integer game speed, 10^(rate/10) times normal",
+          "[ui][console][speed-ui]") {
     osc::GameStateManager mgr;
     CHECK(mgr.sim_rate() == 0);
     CHECK(mgr.speed() == 1.0);
@@ -178,8 +179,19 @@ TEST_CASE("The sim rate: an integer game speed, 10^(rate/10) times normal", "[ui
     lua_pushstring(L, "__osc_console");
     lua_pushlightuserdata(L, &console);
     lua_rawset(L, LUA_REGISTRYINDEX);
+    REQUIRE(lua.do_string(R"(
+        assert(GetSimRate() == 0, 'normal speed is level zero')
+        __heard = {}
+        __modules = {['/lua/ui/uimain.lua'] = {NoteGameSpeedChanged = function(client, rate)
+            assert(client == 1, 'single-player local client')
+            assert(GetSimRate() == rate, 'callback sees the applied speed')
+            table.insert(__heard, rate)
+        end}}
+    )").ok());
+    const int stack_top = lua_gettop(L);
     const auto rate_after = [&](const char* code) {
         REQUIRE(lua.do_string(code).ok());
+        CHECK(lua_gettop(L) == stack_top);
         return mgr.sim_rate();
     };
     CHECK(rate_after("ConExecute('WLD_ResetSimRate')") == 0);
@@ -192,6 +204,19 @@ TEST_CASE("The sim rate: an integer game speed, 10^(rate/10) times normal", "[ui
     REQUIRE(lua.do_string("assert(GetGameSpeed() == 3)").ok());
     CHECK(rate_after("ConExecute('UI_Lua SetGameSpeed(5)')") == 5);
     CHECK(rate_after("ConExecuteSave('UI_Lua SetGameSpeed(6) ; WLD_DecreaseSimRate')") == 5);
+    CHECK(rate_after("SetGameSpeed(100)") == 50);
+    CHECK(rate_after("ConExecute('WLD_IncreaseSimRate')") == 50);
+    CHECK(rate_after("SetGameSpeed(-100)") == -10);
+    CHECK(rate_after("ConExecute('WLD_DecreaseSimRate')") == -10);
+    CHECK(rate_after("ConExecute('WLD_ResetSimRate')") == 0);
+    REQUIRE(lua.do_string(R"(
+        local expected = {1, 2, 1, -4, 0, 3, 5, 6, 5, 50, -10, 0}
+        assert(table.getn(__heard) == table.getn(expected), 'one notification per change')
+        for i, rate in expected do
+            assert(__heard[i] == rate, 'HUD speed notification ' .. i)
+        end
+        assert(GetSimRate() == 0 and GetGameSpeed() == 0, 'reset returns to normal')
+    )").ok());
 }
 
 TEST_CASE("ConTextMatches lists the console's names starting with the text", "[ui][console]") {

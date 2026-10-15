@@ -3579,9 +3579,11 @@ static int l_GetGameTime(lua_State* L) {
     return 1;
 }
 
-/// GetSimRate() → number (sim ticks per second, typically 10)
+static i32 game_speed(lua_State* L);
+
+/// GetSimRate() → integer game speed level (0 is normal, not ticks per second).
 static int l_GetSimRate(lua_State* L) {
-    lua_pushnumber(L, 10.0);
+    lua_pushnumber(L, game_speed(L));
     return 1;
 }
 
@@ -3710,7 +3712,16 @@ static int l_ui_SessionGetScenarioInfo(lua_State* L) {
 /// else this game's own.
 static void set_game_speed(lua_State* L, i32 rate) {
     if (session_request_speed(rate)) return;
-    if (auto* mgr = get_game_state_mgr(L)) mgr->set_sim_rate(rate);
+    if (auto* mgr = get_game_state_mgr(L)) {
+        const i32 previous = mgr->sim_rate();
+        mgr->set_sim_rate(rate);
+        if (mgr->sim_rate() == previous) return;
+        // Network games notify when their applied speed changes are pumped.
+        // Single-player has one local client and no network pump.
+        lua_pushnumber(L, 1);
+        lua_pushnumber(L, mgr->sim_rate());
+        core::call_ui_callback(L, core::kUiMainModule, "NoteGameSpeedChanged", 2);
+    }
 }
 
 /// The game speed: a network game's, or this game's own.
