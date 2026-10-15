@@ -23,9 +23,9 @@ std::vector<std::string> failure_messages();
 /// Forget all recorded failures.
 void reset();
 
-/// Embedded Lua tests report by LOG/WARN-ing a line containing "FAIL"
-/// ("... FAILED", ": FAIL - ..."). When enabled (test modes only), such lines
-/// count as failures. Off by default so normal play never trips it.
+/// Embedded Lua tests report by LOG/WARN-ing the exact uppercase word FAIL,
+/// FAILED or FAILURE ("... FAILED", ": FAIL - ..."). When enabled (test modes
+/// only), such lines count as failures. Off by default during normal play.
 void set_count_lua_failures(bool enabled);
 bool count_lua_failures();
 

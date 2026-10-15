@@ -4,6 +4,7 @@ add_executable(osc_tests
     test_ui_startup.cpp
     test_ui_category_selection.cpp
     test_navigator_goal.cpp
+    test_lua_log_failures.cpp
     test_vfs.cpp
     test_vfs_paths.cpp
     test_platform_paths.cpp

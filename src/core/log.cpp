@@ -5,6 +5,7 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <string>
+#include <string_view>
 #include <system_error>
 
 extern "C" {
@@ -131,12 +132,31 @@ static bool is_builder_deepcopy_diagnostic(const std::string& message) {
                         "`SetupBuilderConditions'") != std::string::npos;
 }
 
-/// In test modes, a Lua LOG/WARN line containing the uppercase token "FAIL"
-/// ("X TEST FAILED: ...", "Bone test 1: FAIL - ...") is the embedded Lua
-/// tests' way of reporting a failed check. FA's own scripts never log it.
+/// Embedded assertions use exact uppercase words. Ordinary diagnostic words
+/// and identifier fragments containing FAIL are still logged, but do not
+/// report an assertion failure.
+static bool contains_lua_failure_token(std::string_view message) {
+    const auto word_character = [](char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+               (c >= '0' && c <= '9') || c == '_';
+    };
+    size_t at = 0;
+    while (at < message.size()) {
+        if (!word_character(message[at])) {
+            ++at;
+            continue;
+        }
+        const size_t begin = at;
+        while (at < message.size() && word_character(message[at])) ++at;
+        const auto token = message.substr(begin, at - begin);
+        if (token == "FAIL" || token == "FAILED" || token == "FAILURE") return true;
+    }
+    return false;
+}
+
+/// In test modes these LOG/WARN tokens report failed embedded assertions.
 static void note_lua_test_failure(const std::string& message) {
-    if (test_status::count_lua_failures() &&
-        message.find("FAIL") != std::string::npos) {
+    if (test_status::count_lua_failures() && contains_lua_failure_token(message)) {
         test_status::record_failure(message);
     }
 }
