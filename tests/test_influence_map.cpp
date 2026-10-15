@@ -268,3 +268,54 @@ TEST_CASE("Threat types are named as Moho's", "[influence]") {
     CHECK_FALSE(sim::threat_type_from_name("antisurface", t)); // case matters
     CHECK_FALSE(sim::threat_type_from_name("Surface", t));
 }
+
+TEST_CASE("LOUD uppercase threat names query their actual influence lanes",
+          "[influence][loud-threat]") {
+    // LOUD's air loiter routine passes AIR, LAND, NAVAL and ANTIAIR;
+    // its no-target fallback queries ECONOMY. Use distinct lane values so
+    // accepting an alias as Overall, Unknown or zero cannot pass.
+    InfluenceMap map(512, 512, 2);
+    ThreatSource plane;
+    plane.air = 3;
+    plane.surface = 4;
+    plane.economy = 5;
+    plane.mobile = true;
+    plane.flies = true;
+    auto land = tank();
+    land.surface = 11;
+    auto sea = tank();
+    sea.surface = 17;
+    map.report(1, 1, {40, 0, 40}, plane);
+    map.report(2, 1, {40, 0, 40}, land);
+    map.report(3, 1, {40, 0, 40}, sea);
+    map.update([](i32 army) { return army == 0; }, [](u32 id) {
+        return std::optional<InfluenceMap::UnitState>(
+            {id == 3 ? ThreatLayer::Naval : ThreatLayer::Land, true});
+    });
+    struct Query {
+        const char* name;
+        ThreatType type;
+        f32 value;
+    };
+    const Query queries[] = {
+        {"AIR", ThreatType::Air, 12},
+        {"LAND", ThreatType::Land, 11},
+        {"NAVAL", ThreatType::Naval, 17},
+        {"ANTIAIR", ThreatType::AntiAir, 3},
+        {"ECONOMY", ThreatType::Economy, 5},
+    };
+    for (const auto& query : queries) {
+        INFO(query.name);
+        ThreatType type = ThreatType::Unknown;
+        const bool accepted = sim::threat_type_from_name(query.name, type);
+        CHECK(accepted);
+        if (!accepted) continue;
+        CHECK(type == query.type);
+        const auto rows = map.threats_around({40, 0, 40}, 1, nullptr, type, 1);
+        REQUIRE(rows.size() == 1);
+        CHECK_THAT(rows[0].threat, WithinAbs(query.value, 1e-5));
+    }
+    ThreatType type = ThreatType::Air;
+    CHECK_FALSE(sim::threat_type_from_name("AIRBORNE", type));
+    CHECK(type == ThreatType::Air);
+}

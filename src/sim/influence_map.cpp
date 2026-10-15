@@ -37,6 +37,14 @@ bool threat_type_from_name(std::string_view name, ThreatType& out) {
         {"AntiSub", ThreatType::AntiSub},
         {"Economy", ThreatType::Economy},
         {"Unknown", ThreatType::Unknown},
+        // LOUD's air loiter routines use these exact uppercase spellings,
+        // including ECONOMY when no preferred target is visible. They name
+        // the same threat lanes; other unknown spellings still fail.
+        {"AIR", ThreatType::Air},
+        {"LAND", ThreatType::Land},
+        {"NAVAL", ThreatType::Naval},
+        {"ANTIAIR", ThreatType::AntiAir},
+        {"ECONOMY", ThreatType::Economy},
     };
     for (const auto& [n, t] : kNames) {
         if (n == name) {
