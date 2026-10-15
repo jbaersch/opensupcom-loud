@@ -299,9 +299,10 @@ void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L, const S
     if (fire_clock > 0) --fire_clock;
 
     if (!enabled || fire_on_death) return;
-    // A nuke's damage is its script's (Damage 0): a manual weapon fires
-    // whatever its damage.
-    if (max_range <= 0 || (damage <= 0 && !manual_fire)) return;
+    // A source target painter deals no damage, but steers a shared turret
+    // and receives the normal targeting and firing callbacks. Preserve the
+    // inert non-scripted fixture/fallback path and manual launch behavior.
+    if (max_range <= 0 || (damage <= 0 && !manual_fire && !fires_through_script())) return;
 
     const TargetMark previous = target_mark();
     if (manual_fire) {
