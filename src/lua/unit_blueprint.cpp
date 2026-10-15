@@ -153,6 +153,17 @@ static void read_drive(lua_State* L, const BlueprintStore& store, const Blueprin
     lua_pop(L, 2);
 }
 
+/// DummyWeapon is a blueprint flag, distinct from the Death-category
+/// targeting exclusion on Weapon::dummy. Numeric flags use zero as false.
+static bool is_dummy_weapon(lua_State* L, int we) {
+    lua_pushstring(L, "DummyWeapon");
+    lua_rawget(L, we);
+    const bool dummy =
+        lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) != 0 : lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    return dummy;
+}
+
 /// One of its Weapon entries, the table at stack index `we`, its `index`-th
 /// (from 0).
 static std::unique_ptr<sim::Weapon> read_weapon(lua_State* L, int we, i32 index) {
@@ -232,10 +243,7 @@ static std::unique_ptr<sim::Weapon> read_weapon(lua_State* L, int we, i32 index)
     if (lua_isboolean(L, -1)) weapon->fire_on_death = lua_toboolean(L, -1) != 0;
     lua_pop(L, 1);
 
-    lua_pushstring(L, "DummyWeapon");
-    lua_gettable(L, we);
-    weapon->dummy = lua_toboolean(L, -1) != 0;
-    lua_pop(L, 1);
+    weapon->dummy = is_dummy_weapon(L, we);
     lua_pushstring(L, "WeaponCategory");
     lua_gettable(L, we);
     if (lua_type(L, -1) == LUA_TSTRING && std::string_view(lua_tostring(L, -1)) == "Death")
@@ -442,7 +450,12 @@ static void read_weapons(lua_State* L, const BlueprintStore& store, const Bluepr
                 continue;
             }
             int we = lua_gettop(L);
-            unit.add_weapon(read_weapon(L, we, wi - 1));
+            // Moho's Unit::Initialize creates runtime weapons only for
+            // non-dummy blueprint rows. GetWeaponCount/GetWeapon expose
+            // that dense vector; the original blueprint rows remain intact.
+            if (!is_dummy_weapon(L, we)) {
+                unit.add_weapon(read_weapon(L, we, unit.weapon_count()));
+            }
             lua_pop(L, 1);
         }
     }
