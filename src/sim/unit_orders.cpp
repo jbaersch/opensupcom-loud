@@ -760,13 +760,61 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
     auto& registry = ctx.registry;
     auto* L = ctx.L;
     const u32 order_id = cmd.command_id;
+    const auto friendly_site = [&](const Entity& entity) {
+        return entity.is_unit() && !entity.destroyed() &&
+               !static_cast<const Unit&>(entity).is_dying() &&
+               (entity.army() == army() || (ctx.sim && ctx.sim->is_ally(army(), entity.army()))) &&
+               entity.blueprint_id() == cmd.blueprint_id &&
+               entity.position().x == cmd.target_pos.x && entity.position().z == cmd.target_pos.z;
+    };
+    // A mobile build that joined an existing site keeps that identity until
+    // its order ends, including when the site completes or is cancelled.
+    // Reuse the normal construction-repair task for arms, grants and one
+    // completion callback; never turn a vanished site into another skeleton.
+    if (cmd.target_id != 0) {
+        const Entity* site = registry.find(cmd.target_id);
+        // Finishing the mobile build also ends a helper's order. Damage
+        // after completion must not turn it into a new repair task and
+        // hold up the helper's queued work.
+        const bool finished = site && site->is_unit() &&
+                              !static_cast<const Unit*>(site)->is_being_built() &&
+                              site->fraction_complete() >= 1.0f;
+        if (site && (!friendly_site(*site) || finished)) {
+            if (build_target_id_ == cmd.target_id) stop_assisting(L, &registry);
+            if (destroyed() || !in_registry()) return OrderStep::Gone;
+            if (command_queue_.empty() || &command_queue_.front() != &cmd ||
+                command_queue_.front().command_id != order_id)
+                return OrderStep::Next;
+            end_approach(cmd);
+            command_queue_.pop_front();
+            return OrderStep::Next;
+        }
+        return order_repair(cmd, dt, ctx, econ_eff);
+    }
     if (build_target_id_ == 0) {
+        // Several selected builders receive the same snapped mobile-build
+        // site. The first creates it; the others contribute their own work
+        // to it, rather than making overlapping copies. The spatial query
+        // returns entity-id order, so every peer chooses the same candidate.
+        const auto [fx, fz] = blueprint_footprint_cells(L, cmd.blueprint_id);
+        snap_structure_center(cmd.target_pos.x, cmd.target_pos.z, fx, fz);
+        Unit* shared = nullptr;
+        for (Entity* entity : registry.units_in_radius(cmd.target_pos.x, cmd.target_pos.z, 0.01f)) {
+            if (entity == this || !friendly_site(*entity)) continue;
+            auto& unit = static_cast<Unit&>(*entity);
+            if (unit.is_being_built() && unit.fraction_complete() < 1.0f) {
+                shared = &unit;
+                break;
+            }
+        }
+        if (shared) {
+            cmd.target_id = shared->entity_id();
+            return order_repair(cmd, dt, ctx, econ_eff);
+        }
         if (!cmd.site_cleared && cmd.clearing_prop_id == 0) {
             // The site, as the task takes it: snapped to the footprint's
             // cells (Moho's CUnitMobileBuildTask, as made). An order from
             // the UI comes snapped already; a script's may not.
-            const auto [fx, fz] = blueprint_footprint_cells(L, cmd.blueprint_id);
-            snap_structure_center(cmd.target_pos.x, cmd.target_pos.z, fx, fz);
             const BuildSiteProp site =
                 find_build_site_prop(L, registry, *this, cmd.blueprint_id, cmd.target_pos);
             if (destroyed() || !in_registry()) {
