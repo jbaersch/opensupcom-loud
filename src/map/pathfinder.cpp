@@ -34,6 +34,7 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
                                   const std::string& layer,
                                   f32 draft, bool amphibious) const {
     PathResult result;
+    last_nodes_explored_ = 0;
 
     u32 sx, sz, gx, gz;
     grid_.world_to_grid(start_x, start_z, sx, sz);
@@ -44,6 +45,19 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
     // asks every tick, and must not starve everyone else's paths.
     if (sx == gx && sz == gz) {
         result.found = true;
+        result.waypoints.push_back({goal_x, 0, goal_z});
+        return result;
+    }
+
+    // A clear segment needs no search. In particular, a large group on
+    // open ground must not start eight units at a time while waiting for
+    // the shared A* budget. Use the same complete cell/corner checks as
+    // smoothing; a footprint escape or obstructed route still searches.
+    if (has_line_of_sight(sx, sz, gx, gz, layer, draft, amphibious)) {
+        f32 wx = 0, wz = 0;
+        grid_.grid_to_world(sx, sz, wx, wz);
+        result.found = true;
+        result.waypoints.push_back({wx, 0, wz});
         result.waypoints.push_back({goal_x, 0, goal_z});
         return result;
     }
@@ -326,13 +340,16 @@ std::vector<std::pair<u32, u32>> Pathfinder::smooth_path(
 
     size_t current = 0;
     while (current < path.size() - 1) {
-        // Find farthest visible waypoint from current
+        // Find the farthest visible waypoint. Looking back from the end
+        // selects the same node without sweeping every shorter segment
+        // first on an open route.
         size_t farthest = current + 1;
-        for (size_t i = current + 2; i < path.size(); ++i) {
+        for (size_t i = path.size() - 1; i > current + 1; --i) {
             if (has_line_of_sight(path[current].first, path[current].second,
                                   path[i].first, path[i].second, layer,
                                   draft, amphibious)) {
                 farthest = i;
+                break;
             }
         }
         smoothed.push_back(path[farthest]);
@@ -345,13 +362,10 @@ std::vector<std::pair<u32, u32>> Pathfinder::smooth_path(
 bool Pathfinder::has_line_of_sight(u32 x0, u32 z0, u32 x1, u32 z1,
                                     const std::string& layer,
                                     f32 draft, bool amphibious) const {
-    // Bresenham's line algorithm
-    i32 dx = static_cast<i32>(x1) - static_cast<i32>(x0);
-    i32 dz = static_cast<i32>(z1) - static_cast<i32>(z0);
-    i32 sx = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
-    i32 sz = dz > 0 ? 1 : (dz < 0 ? -1 : 0);
-    dx = std::abs(dx);
-    dz = std::abs(dz);
+    const i32 dx = std::abs(static_cast<i32>(x1) - static_cast<i32>(x0));
+    const i32 dz = std::abs(static_cast<i32>(z1) - static_cast<i32>(z0));
+    const i32 sx = x1 > x0 ? 1 : (x1 < x0 ? -1 : 0);
+    const i32 sz = z1 > z0 ? 1 : (z1 < z0 ? -1 : 0);
 
     i32 x = static_cast<i32>(x0);
     i32 z = static_cast<i32>(z0);
@@ -363,28 +377,31 @@ bool Pathfinder::has_line_of_sight(u32 x0, u32 z0, u32 x1, u32 z1,
                grid_.passable_at(static_cast<u32>(cz) * w + static_cast<u32>(cx), mover);
     };
 
-    if (dx >= dz) {
-        i32 err = dx / 2;
-        for (i32 i = 0; i <= dx; ++i) {
-            if (!open_at(x, z)) return false;
-            err -= dz;
-            if (err < 0) {
-                z += sz;
-                err += dx;
-            }
+    if (!open_at(x, z)) return false;
+    i64 crossed_x = 0, crossed_z = 0;
+    // Traverse every cell crossed between the cell centres. Comparing
+    // the next edge's rational distance uses integers, including exact
+    // corner crossings, without skipping cells as raster sampling did.
+    while (x != static_cast<i32>(x1) || z != static_cast<i32>(z1)) {
+        const i64 next_x = (2 * crossed_x + 1) * dz;
+        const i64 next_z = (2 * crossed_z + 1) * dx;
+        if (next_x == next_z) {
+            // Match A*'s diagonal rule: neither side of a corner may be
+            // blocked. A valid search path must remain valid when pulled
+            // straight, as Moho's swept navigator shortcuts require.
+            if (!open_at(x + sx, z) || !open_at(x, z + sz)) return false;
             x += sx;
-        }
-    } else {
-        i32 err = dz / 2;
-        for (i32 i = 0; i <= dz; ++i) {
-            if (!open_at(x, z)) return false;
-            err -= dx;
-            if (err < 0) {
-                x += sx;
-                err += dz;
-            }
             z += sz;
+            ++crossed_x;
+            ++crossed_z;
+        } else if (next_x < next_z) {
+            x += sx;
+            ++crossed_x;
+        } else {
+            z += sz;
+            ++crossed_z;
         }
+        if (!open_at(x, z)) return false;
     }
     return true;
 }

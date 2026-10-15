@@ -118,7 +118,8 @@ private:
         const std::vector<std::pair<u32, u32>>& path,
         const std::string& layer, f32 draft = 0, bool amphibious = false) const;
 
-    /// Line-of-sight check on the passability grid (Bresenham).
+    /// Complete cell traversal on the passability grid; diagonal corner
+    /// crossings require both side cells, as A* does.
     bool has_line_of_sight(u32 x0, u32 z0, u32 x1, u32 z1,
                            const std::string& layer,
                            f32 draft = 0, bool amphibious = false) const;

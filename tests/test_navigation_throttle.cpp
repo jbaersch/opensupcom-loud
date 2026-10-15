@@ -84,9 +84,15 @@ TEST_CASE("Move orders beyond the per-tick path budget are delayed not dropped",
         auto* u = spawn_land_unit(sim, 10.0f, 10.0f + 4.0f * static_cast<osc::f32>(i));
         u->push_command(order(CommandType::Move, 110.0f, 10.0f + 4.0f * i), true);
         units.push_back(u);
+        // Force a real search; clear straight segments deliberately bypass
+        // the A* budget. Gaps between these obstacles retain a legal detour.
+        sim.pathfinding_grid()->mark_obstacle(61, 11 + 4.0f * i, 2, 2);
     }
 
-    for (int t = 0; t < 5; ++t) sim.tick();
+    sim.tick();
+    CHECK(units.back()->navigator().status() == osc::sim::Navigator::Status::WaitingForPath);
+    CHECK_FALSE(units.back()->command_queue().empty());
+    for (int t = 1; t < 5; ++t) sim.tick();
 
     // Every unit made progress: none had its order silently discarded.
     for (int i = 0; i < movers; ++i) {
@@ -109,9 +115,13 @@ TEST_CASE("Patrol with an exhausted path budget does not hang the tick",
         auto* u = spawn_land_unit(sim, 10.0f, 10.0f + 4.0f * static_cast<osc::f32>(i));
         u->push_command(order(CommandType::Patrol, 100.0f, 10.0f + 4.0f * i), true);
         units.push_back(u);
+        sim.pathfinding_grid()->mark_obstacle(61, 11 + 4.0f * i, 2, 2);
     }
 
-    for (int t = 0; t < 5; ++t) sim.tick(); // must return
+    sim.tick(); // must return, retaining the throttled patrol
+    CHECK(units.back()->navigator().status() == osc::sim::Navigator::Status::WaitingForPath);
+    CHECK_FALSE(units.back()->command_queue().empty());
+    for (int t = 1; t < 5; ++t) sim.tick();
 
     for (int i = 0; i < patrollers; ++i) {
         INFO("unit " << i);
@@ -158,9 +168,13 @@ TEST_CASE("Builders sent to a site beyond the per-tick path budget still go", "[
         build.blueprint_id = "ueb2101";
         u->push_command(build, true);
         units.push_back(u);
+        sim.pathfinding_grid()->mark_obstacle(61, 11 + 4.0f * i, 2, 2);
     }
 
-    for (int t = 0; t < 5; ++t) sim.tick();
+    sim.tick();
+    CHECK(units.back()->navigator().status() == osc::sim::Navigator::Status::WaitingForPath);
+    CHECK_FALSE(units.back()->command_queue().empty());
+    for (int t = 1; t < 5; ++t) sim.tick();
 
     for (int i = 0; i < builders; ++i) {
         INFO("builder " << i);
@@ -251,6 +265,9 @@ TEST_CASE("repeated requests for an unreachable goal do not re-run A* every tick
 
     // A different goal, or a changed position, is a new question.
     nav.set_goal({20.0f, 0.0f, 64.0f}, pf, here, "Land");
+    CHECK(nav.is_moving());
+    CHECK(pf->requests_this_tick() == 1); // a clear segment needs no A*
+    nav.set_goal({100.0f, 0.0f, 80.0f}, pf, here, "Land");
     CHECK(pf->requests_this_tick() == 2);
 }
 

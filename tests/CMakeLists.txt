@@ -38,6 +38,8 @@ add_executable(osc_tests
     test_prop_fall.cpp
     test_image.cpp
     test_navigation_throttle.cpp
+    test_direct_path.cpp
+    test_path_smoothing.cpp
     test_build_placement.cpp
     test_manipulators.cpp
     test_patrol.cpp
