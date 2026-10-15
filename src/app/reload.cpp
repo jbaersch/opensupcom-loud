@@ -253,8 +253,30 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
         auto sess_result = new_session_mgr.start_session(
             *sim_lua_state, vfs, *sim_state, scenario_meta);
         if (!sess_result) {
-            spdlog::warn("Reload session start failed: {}",
-                         sess_result.error().message);
+            const std::string diagnostic = "Game launch failed: " + sess_result.error().message;
+            spdlog::error("{}", diagnostic);
+            lua_pushstring(uiL, "__osc_front_end_notice");
+            lua_pushstring(uiL, diagnostic.c_str());
+            lua_rawset(uiL, LUA_REGISTRYINDEX);
+            if (osc::test_status::count_lua_failures())
+                osc::test_status::record_failure(diagnostic);
+            // Initialization can already have started script threads. Drop
+            // the entire partial session before a caller can tick it or
+            // attach playback, recording or the game interface to it.
+            osc::lua::mp_net_state().session.reset();
+            detach_ui_from_sim(uiL);
+            sim_state.reset();
+            sim_lua_state.reset();
+            store.rebind(nullptr);
+            if (world_interp) {
+                world_interp->history.clear();
+                world_interp->clock.reset();
+                world_interp->one_tick_next = true;
+            }
+            if (input_handler) input_handler->set_selected({});
+            if (prev_selection) prev_selection->clear();
+            sim_accumulator = 0.0;
+            return false;
         }
         sim_state->set_game_setup(setup);
         // Every game records (for LastGame and --record); a replay plays.

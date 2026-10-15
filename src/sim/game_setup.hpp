@@ -3,6 +3,7 @@
 #include "core/types.hpp"
 #include "sim/sim_random.hpp"
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -30,6 +31,11 @@ struct ArmySlotConfig {
     int army_color = -1;
     int handicap = 0; // percent income reduction (0 = none)
     std::string ai_personality;
+    /// The launch's complete plain-data PlayerOptions/teamInfo entry, as
+    /// lua_to_bytes wrote it. Scripts own custom fields such as RGB colours
+    /// and per-player AI settings. None: an engine-created or legacy slot.
+    /// An engaged but empty value is an uncarryable launch, rejected at start.
+    std::optional<std::string> player_options;
 };
 
 struct GameOptionValue {

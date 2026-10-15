@@ -108,16 +108,43 @@ void App::Window::handle_launch() {
                 pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 1, ui_frame_count);
                 renderer.render_ui_only(ui_lua_state.raw(), &ui_registry);
 
+                const int failures_before_reload = osc::test_status::failure_count();
+                const auto failed_launch = [&] {
+                    const char* generic_notice = "The game could not be started. "
+                                                 "See the log for details.";
+                    lua_pushstring(uiL, "__osc_front_end_notice");
+                    lua_rawget(uiL, LUA_REGISTRYINDEX);
+                    const bool has_notice = lua_type(uiL, -1) == LUA_TSTRING;
+                    lua_pop(uiL, 1);
+                    if (!has_notice) {
+                        lua_pushstring(uiL, "__osc_front_end_notice");
+                        lua_pushstring(uiL, generic_notice);
+                        lua_rawset(uiL, LUA_REGISTRYINDEX);
+                    }
+                    if (osc::test_status::count_lua_failures() &&
+                        osc::test_status::failure_count() == failures_before_reload)
+                        osc::test_status::record_failure("Game launch failed during reload");
+                    lua_pushstring(uiL, "__osc_return_to_lobby");
+                    lua_pushboolean(uiL, 1);
+                    lua_rawset(uiL, LUA_REGISTRYINDEX);
+                    // Reuse the normal teardown and fresh front-end notice.
+                    // No replay, save catch-up or interface can use this sim.
+                    handle_return_to_lobby();
+                };
+
                 // Execute reload in stages, pumping UI frames between each
                 const auto reload = [&] {
-                    execute_reload_sequence(sim_lua_state, sim_state, ui_lua_state, vfs, store,
-                                            loader, config, scenario_meta, game_state_mgr,
-                                            &renderer, &ui_store, &input_handler, &prev_selection,
-                                            &world_interp,
-                                            launch_seed(opt.seed_arg, opt.reproducible_run),
-                                            sim_accumulator, launch_scenario, recorded);
+                    return execute_reload_sequence(sim_lua_state, sim_state, ui_lua_state, vfs,
+                                                   store, loader, config, scenario_meta,
+                                                   game_state_mgr, &renderer, &ui_store,
+                                                   &input_handler, &prev_selection, &world_interp,
+                                                   launch_seed(opt.seed_arg, opt.reproducible_run),
+                                                   sim_accumulator, launch_scenario, recorded);
                 };
-                reload();
+                if (!reload()) {
+                    failed_launch();
+                    return;
+                }
                 if (launch_replay && sim_state) {
                     // Watched as an observer, as the replay plays.
                     active_playback.emplace(std::move(*launch_replay));
@@ -142,7 +169,10 @@ void App::Window::handle_launch() {
                     if (result == Restore::Failed) {
                         spdlog::warn("Saved game '{}': not restored ({}); catching up",
                                      launch_save->name, why);
-                        reload();
+                        if (!reload()) {
+                            failed_launch();
+                            return;
+                        }
                     }
                     if (result != Restore::Done && sim_state) {
                         catch_up.emplace(std::move(launch_save->game));
@@ -221,6 +251,9 @@ void App::Window::handle_return_to_lobby() {
             detach_ui_from_sim(uiL);
             sim_state.reset();
             sim_lua_state.reset();
+            world_interp.history.clear();
+            world_interp.clock.reset();
+            world_interp.one_tick_next = true;
             // Its blueprints' Lua references went with it: the store holds
             // none until the next game rebinds it. (It had kept the freed
             // state, and releasing its references there at exit crashed a

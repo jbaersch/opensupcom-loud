@@ -124,7 +124,7 @@ public:
     /// The lobby's prebuilt units, after BeginSession (Moho's
     /// Sim::PostInitialize): with ScenarioInfo.Options.PrebuiltUnits "On",
     /// the script's InitializePrebuiltUnits for each army but the civilians.
-    void spawn_prebuilt_units(lua_State* L, sim::SimState& sim);
+    Result<void> spawn_prebuilt_units(lua_State* L, sim::SimState& sim);
 
 private:
     /// ScenarioInfo.ArmySetup, one entry per army of the game, by name, and

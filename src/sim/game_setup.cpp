@@ -73,6 +73,8 @@ void write_game_setup(ByteWriter& w, const GameSetup& s) {
         write_int(w, slot.handicap);
         w.str(slot.ai_personality);
         write_int(w, slot.slot);
+        w.u8v(slot.player_options.has_value() ? 1 : 0);
+        if (slot.player_options) w.str(*slot.player_options);
     }
 
     w.u8v(s.options.configured ? 1 : 0);
@@ -122,6 +124,7 @@ bool read_game_setup(ByteReader& r, GameSetup& s, u32 version) {
         slot.handicap = read_int(r);
         slot.ai_personality = r.str();
         if (version >= 9) slot.slot = read_int(r); // before: none
+        if (version >= 17 && r.u8v() != 0) slot.player_options = r.str();
         s.slots.push_back(std::move(slot));
     }
 

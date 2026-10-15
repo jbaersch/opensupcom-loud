@@ -24,8 +24,8 @@ struct Replay {
     // slot; 10: the game's mods; 11: a Script order's table; 12: a campaign
     // operation's flow; 13: a callback's Args as Lua data;
     // 14: the game's random stream; 15: a formation's Move or FormMove;
-    // 16: the game's pathing (--moho-pathing)
-    static constexpr u32 kVersion = 16;
+    // 16: the game's pathing (--moho-pathing); 17: complete player slot data
+    static constexpr u32 kVersion = 17;
 
     u32 version = kVersion;
     u32 final_tick = 0;               // last tick the recording covers

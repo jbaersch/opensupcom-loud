@@ -153,6 +153,31 @@ void apply_config_to_brain(const ArmySlotConfig* cfg, sim::ArmyBrain* brain,
 
 namespace {
 
+// A new sim receives fresh tables, with no references into the front end's VM.
+// A malformed replay or uncarryable launch must not become a partial slot.
+bool push_player_options(lua_State* L, const ArmySlotConfig* cfg) {
+    if (!cfg || !cfg->player_options) {
+        lua_newtable(L);
+        return true;
+    }
+    if (!sim::push_lua_bytes(L, *cfg->player_options)) return false;
+    if (lua_istable(L, -1)) return true;
+    lua_pop(L, 1);
+    return false;
+}
+
+std::string player_nickname(lua_State* L, int options, const std::string& fallback) {
+    for (const char* key : {"PlayerName", "Nickname"}) {
+        lua_pushstring(L, key);
+        lua_rawget(L, options);
+        const bool named = lua_type(L, -1) == LUA_TSTRING;
+        const std::string name = named ? lua_tostring(L, -1) : "";
+        lua_pop(L, 1);
+        if (named) return name;
+    }
+    return fallback;
+}
+
 /// The armies a launch's players table names (a lobby's PlayerOptions,
 /// or a single-player launch's teamInfo) into `setup`'s slots.
 void read_player_slots(lua_State* L, int options, sim::GameSetup& setup) {
@@ -184,6 +209,11 @@ void read_player_slots(lua_State* L, int options, sim::GameSetup& setup) {
         auto& cfg = setup.slots[army];
         cfg.configured = true;
         cfg.slot = slot;
+        // Keep the scripts' whole slot, not a whitelist of engine fields:
+        // LOUD also consumes WheelColor, Mult and ACT, and mods may add more.
+        // Preserve serialization failure as an invalid value so starting the
+        // session rejects it instead of silently using incomplete defaults.
+        cfg.player_options = sim::lua_to_bytes(L, entry).value_or("");
         auto read_int = [&](const char* key, int def) {
             lua_pushstring(L, key);
             lua_rawget(L, entry);
@@ -371,6 +401,10 @@ Result<void> SessionManager::start_session(LuaState& state,
                                             const ScenarioMetadata& meta) {
     spdlog::info("Starting session...");
     lua_State* L = state.raw();
+    session_active_ = false;
+    lua_pushstring(L, "osc_session_active");
+    lua_pushboolean(L, 0);
+    lua_rawset(L, LUA_REGISTRYINDEX);
 
     // The game's armies: the sim's, as the launch named them (a lobby's
     // slots taken, or the scenario's first); the scenario's without any
@@ -384,6 +418,13 @@ Result<void> SessionManager::start_session(LuaState& state,
     // its scripts decide the game.
     const bool operation = meta.type == "campaign" || meta.type == "campaign_coop";
 
+    for (const auto& cfg : army_slot_configs_) {
+        if (!push_player_options(L, &cfg))
+            return Error("Player slot " + std::to_string(cfg.slot) +
+                         " cannot be carried as a plain-data table");
+        lua_pop(L, 1);
+    }
+
     // Step 1: Populate ScenarioInfo.ArmySetup for Lua code
     setup_army_info(L, armies, operation);
     apply_game_options_to_sim(game_options_, sim);
@@ -391,10 +432,7 @@ Result<void> SessionManager::start_session(LuaState& state,
     // Step 2: Call SetupSession() — loads save + script files
     spdlog::info("  Calling SetupSession()...");
     auto setup_result = call_setup_session(L);
-    if (!setup_result) {
-        spdlog::warn("  SetupSession() failed: {} (continuing anyway)",
-                      setup_result.error().message);
-    }
+    if (!setup_result) return setup_result;
 
     SimLoader::import_script_classes(state);
 
@@ -431,9 +469,13 @@ Result<void> SessionManager::start_session(LuaState& state,
     i32 brains_created = 0;
     const sim::GameColors game_colors = sim::read_game_colors(L);
     for (size_t i = 0; i < army_limit; i++) {
-        auto result = create_army_brain(L, sim, static_cast<i32>(i), armies[i], armies[i]);
+        const auto* cfg = slot_config_for_army(static_cast<int>(i));
+        push_player_options(L, cfg); // validated before any initialization
+        const std::string nickname = player_nickname(L, lua_gettop(L), armies[i]);
+        lua_pop(L, 1);
+        auto result = create_army_brain(L, sim, static_cast<i32>(i), armies[i], nickname);
         if (!result) {
-            spdlog::warn("  Failed to create brain for {}: {}", armies[i], result.error().message);
+            return Error("Failed to create brain for " + armies[i] + ": " + result.error().message);
         } else {
             auto* brain = sim.get_army(static_cast<i32>(i));
             apply_config_to_brain(slot_config_for_army(static_cast<int>(i)), brain, game_colors);
@@ -460,12 +502,14 @@ Result<void> SessionManager::start_session(LuaState& state,
 
     // Step 5: Call BeginSession()
     spdlog::info("  Calling BeginSession()...");
+    lua_pushstring(L, "BeginSession");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const bool script_session = lua_isfunction(L, -1);
+    lua_pop(L, 1);
     auto begin_result = call_begin_session(L);
-    if (!begin_result) {
-        spdlog::warn("  BeginSession() failed: {} (continuing anyway)",
-                      begin_result.error().message);
-    }
-    spawn_prebuilt_units(L, sim);
+    if (!begin_result) return begin_result;
+    auto prebuilt_result = spawn_prebuilt_units(L, sim);
+    if (!prebuilt_result) return prebuilt_result;
 
     // The scripts decide the game when they have a victory check running,
     // as in Moho, and the engine's own adjudication stands down.
@@ -476,12 +520,10 @@ Result<void> SessionManager::start_session(LuaState& state,
                                               : "the engine decides (no victory script)");
     }
 
-    // Step 6: Ensure each non-civilian army has at least one unit (ACU).
-    //         FA's OnPopulate may fail in our engine, so we create ACUs
-    //         directly via the sim C++ API if they weren't spawned. Never in
-    //         an operation: its scripts bring armies in when they mean to
-    //         (the tutorial's, after its opening camera move).
-    for (size_t i = 0; i < army_limit && !operation; i++) {
+    // Data without a BeginSession hook may use the engine's minimal start.
+    // A source session owns unit creation, including delayed spawns: never
+    // replace its commanders after failed or incomplete script startup.
+    for (size_t i = 0; i < army_limit && !operation && !script_session; i++) {
         auto* brain = sim.get_army(static_cast<i32>(i));
         if (!brain || brain->is_civilian()) continue;
         if (brain->get_unit_cost_total(sim.entity_registry()) > 0) continue;
@@ -638,8 +680,10 @@ void SessionManager::setup_army_info(lua_State* L, const std::vector<std::string
 
     for (size_t i = 0; i < armies.size(); i++) {
         const auto& army_name = armies[i];
+        const auto* cfg = slot_config_for_army(static_cast<int>(i));
         lua_pushstring(L, army_name.c_str());
-        lua_newtable(L);
+        push_player_options(L, cfg); // validated by start_session
+        const std::string nickname = player_nickname(L, lua_gettop(L), army_name);
 
         // Civilian check (must be before Human flag)
         bool is_civilian = army_name.find("CIVILIAN") != std::string::npos ||
@@ -661,15 +705,13 @@ void SessionManager::setup_army_info(lua_State* L, const std::vector<std::string
 
         // Nickname
         lua_pushstring(L, "Nickname");
-        lua_pushstring(L, army_name.c_str());
+        lua_pushstring(L, nickname.c_str());
         lua_rawset(L, -3);
 
         // ArmyIndex (1-based)
         lua_pushstring(L, "ArmyIndex");
         lua_pushnumber(L, static_cast<int>(i) + 1);
         lua_rawset(L, -3);
-
-        const auto* cfg = slot_config_for_army(static_cast<int>(i));
 
         // Faction — default 1 (UEF)
         lua_pushstring(L, "Faction");
@@ -710,7 +752,7 @@ Result<void> SessionManager::call_setup_session(lua_State* L) {
     lua_getglobal(L, "SetupSession");
     if (!lua_isfunction(L, -1)) {
         lua_pop(L, 1);
-        return Error("SetupSession is not defined");
+        return {}; // synthetic/content-only sessions need no lifecycle hook
     }
 
     int status = lua_pcall(L, 0, 0, 0);
@@ -815,6 +857,8 @@ Result<void> SessionManager::create_army_brain(lua_State* L,
         return Error("Army index out of range: " + std::to_string(index));
     }
 
+    brain->set_nickname(nickname);
+    const int top = lua_gettop(L);
     // Create a Lua table for this brain
     lua_newtable(L);
     int brain_tbl = lua_gettop(L);
@@ -920,9 +964,9 @@ Result<void> SessionManager::create_army_brain(lua_State* L,
             // truthy in Lua and makes LOUD try to fork self[""] as a plan.
             lua_pushnil(L);
             if (lua_pcall(L, 2, 0, 0) != 0) {
-                spdlog::warn("ArmyPool OnCreate error: {}",
-                              lua_tostring(L, -1));
-                lua_pop(L, 1);
+                const std::string err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown";
+                lua_settop(L, top);
+                return Error("ArmyPool OnCreate error: " + err);
             }
         } else {
             lua_pop(L, 1);
@@ -941,10 +985,9 @@ Result<void> SessionManager::create_army_brain(lua_State* L,
 
         int status = lua_pcall(L, 4, 0, 0);
         if (status != 0) {
-            const char* err = lua_tostring(L, -1);
-            spdlog::warn("  OnCreateArmyBrain({}) error: {}", name,
-                          err ? err : "unknown");
-            lua_pop(L, 1);
+            const std::string err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown";
+            lua_settop(L, top);
+            return Error("OnCreateArmyBrain(" + name + ") error: " + err);
         }
     } else {
         lua_pop(L, 1); // pop non-function
@@ -954,7 +997,7 @@ Result<void> SessionManager::create_army_brain(lua_State* L,
     return {};
 }
 
-void SessionManager::spawn_prebuilt_units(lua_State* L, sim::SimState& sim) {
+Result<void> SessionManager::spawn_prebuilt_units(lua_State* L, sim::SimState& sim) {
     // Moho's Sim::PostInitialize: with the lobby's PrebuiltUnits "On", the
     // script's InitializePrebuiltUnits(armyName) for each army but the
     // civilians (it runs the brain's OnSpawnPreBuiltUnits: extractors on the
@@ -973,7 +1016,7 @@ void SessionManager::spawn_prebuilt_units(lua_State* L, sim::SimState& sim) {
         lua_pop(L, 1);
     }
     lua_pop(L, 1);
-    if (!on) return;
+    if (!on) return {};
     for (size_t i = 0; i < sim.army_count(); ++i) {
         const auto* brain = sim.get_army(static_cast<i32>(i));
         if (!brain || brain->is_civilian()) continue;
@@ -981,22 +1024,23 @@ void SessionManager::spawn_prebuilt_units(lua_State* L, sim::SimState& sim) {
         lua_rawget(L, LUA_GLOBALSINDEX);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
-            return;
+            return {};
         }
         lua_pushstring(L, brain->name().c_str());
         if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("  InitializePrebuiltUnits({}) error: {}", brain->name(),
-                         lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown");
+            const std::string err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown";
             lua_pop(L, 1);
+            return Error("InitializePrebuiltUnits(" + brain->name() + ") error: " + err);
         }
     }
+    return {};
 }
 
 Result<void> SessionManager::call_begin_session(lua_State* L) {
     lua_getglobal(L, "BeginSession");
     if (!lua_isfunction(L, -1)) {
         lua_pop(L, 1);
-        return Error("BeginSession is not defined");
+        return {}; // without scripts the engine can supply a minimal start
     }
 
     int status = lua_pcall(L, 0, 0, 0);

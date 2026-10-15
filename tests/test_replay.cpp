@@ -231,10 +231,12 @@ TEST_CASE("A replay carries the game's setup", "[replay]") {
     human.start_spot = 2;
     human.player_color = -1;
     human.slot = 2;
+    human.player_options = std::string("\0\1\2\0player data", 15);
     osc::sim::ArmySlotConfig ai = human;
     ai.human = false;
     ai.ai_personality = "rush";
     ai.slot = 5;
+    ai.player_options.reset(); // engine-created slots still have no source table
     r.setup.slots = {human, ai};
     r.setup.options.configured = true;
     r.setup.options.set_string("Victory", "demoralization");
@@ -262,6 +264,8 @@ TEST_CASE("A replay carries the game's setup", "[replay]") {
     CHECK(out.setup.slots[1].ai_personality == "rush");
     CHECK(out.setup.slots[0].slot == 2); // their lobby slots (version 9)
     CHECK(out.setup.slots[1].slot == 5);
+    CHECK(out.setup.slots[0].player_options == human.player_options);
+    CHECK_FALSE(out.setup.slots[1].player_options.has_value());
     REQUIRE(out.setup.options.values.size() == 3);
     CHECK(out.setup.options.values[1].first == "UnitCap");
     CHECK(out.setup.options.values[1].second.number_value == 500);
@@ -320,6 +324,53 @@ TEST_CASE("A version 8 replay's armies keep their own places", "[replay]") {
     CHECK_FALSE(out.setup.moho_pathing); // before version 16: none
     CHECK(osc::sim::session_army_names(out.setup, {"ARMY_1", "ARMY_2"}) ==
           std::vector<std::string>{"ARMY_1"});
+}
+
+TEST_CASE("A version 16 replay has legacy slots without a player table", "[replay]") {
+    std::vector<osc::u8> bytes;
+    osc::sim::ByteWriter w(bytes);
+    for (char c : {'O', 'S', 'C', 'R'}) w.u8v(static_cast<osc::u8>(c));
+    w.u32v(16);
+    w.u32v(0); // final tick
+    w.u32v(0); // command delay
+    w.u64v(77);
+    w.str(""); // victory
+    w.str("legacy build");
+    w.u8v(1); // setup
+    w.str("/maps/test/test_scenario.lua");
+    w.u64v(77);
+    w.u32v(1); // army count
+    w.u32v(1); // slots
+    w.u8v(1);  // configured
+    w.u8v(0);  // AI
+    for (osc::u32 v : {2u, 4u, 1u, 0xFFFFFFFFu, 0xFFFFFFFFu, 0u}) w.u32v(v);
+    w.str("test_ai");
+    w.u32v(3); // source lobby slot
+    w.u8v(0);  // options
+    w.u32v(0);
+    w.u32v(0);
+    w.u32v(1); // AI army indices
+    w.u32v(0);
+    w.str("test_ai");
+    w.f64v(1.0);
+    w.f64v(1.0);
+    w.str(""); // mods
+    w.str(""); // campaign
+    w.u8v(0);  // tutorial
+    w.u8v(1);  // Moho random
+    w.u8v(1);  // Moho pathing
+    w.u32v(0); // checksum trail
+    w.u32v(0);
+    w.u32v(0); // commands
+    Replay out;
+    REQUIRE(Replay::deserialize(bytes, out));
+    REQUIRE(out.setup.slots.size() == 1);
+    CHECK(out.setup.slots[0].slot == 3);
+    CHECK(out.setup.slots[0].faction == 2);
+    CHECK(out.setup.slots[0].ai_personality == "test_ai");
+    CHECK_FALSE(out.setup.slots[0].player_options.has_value());
+    CHECK(out.setup.moho_random);
+    CHECK(out.setup.moho_pathing);
 }
 
 TEST_CASE("A version 3 replay still loads, without a setup", "[replay]") {
