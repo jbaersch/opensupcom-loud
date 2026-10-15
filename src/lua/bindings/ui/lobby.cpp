@@ -140,7 +140,9 @@ const MethodEntry ui_discovery_methods[] = {
 static int lobby_SendData(lua_State* L);
 static int lobby_BroadcastData(lua_State* L) {
     if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_BroadcastData(L, *nl);
-    return lobby_SendData(L);
+    // Broadcast excludes its sender, as in the network lobby. A local lobby
+    // has no other peers; its scripts already applied their own changes.
+    return 0;
 }
 
 static const char* lobby_arg_string(lua_State* L, int idx, const char* fallback) {

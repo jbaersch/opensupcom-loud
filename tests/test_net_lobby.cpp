@@ -206,6 +206,8 @@ TEST_CASE("The single-player lobby stays a loopback (M218a)", "[lobby][lua]") {
     World w;
     REQUIRE(w.run(R"(
         local sp = InternalCreateLobby(TestComm, 'None', 0, 8, 'Solo', nil, nil)
+        sp:BroadcastData({Type = 'PlayerOption', Slot = 1})
+        assert(sp.got == nil, 'single-player broadcast must not echo to its sender')
         sp:SendData('1', {Type = 'Echo'})
         assert(sp.got and sp.got[1].Type == 'Echo', 'SendData calls back at once')
         assert(sp:IsHost())
