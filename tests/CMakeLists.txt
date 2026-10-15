@@ -78,6 +78,7 @@ add_executable(osc_tests
     test_ordered_iteration.cpp
     test_collision.cpp
     test_collision_cells.cpp
+    test_entity_rect_query.cpp
     test_coords_tilt.cpp
     test_flight.cpp
     test_dmath.cpp

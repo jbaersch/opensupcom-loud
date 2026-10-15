@@ -157,7 +157,7 @@ void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
     w.u32v(reg.next_id_);
     // cells_: each entity's link order (its CellLink), and the count of
     // links made (seq_). The rest is rebuilt: width_, height_, shift_ and
-    // last_index_ are the map's; units_ and props_ follow from the entities
+    // last_index_ are the map's; units_, props_ and others_ follow from the entities
     // and their order; moves_ is empty between ticks, and move_stamp_ and
     // gather_ only tell one tick's moves and one gather's finds apart
     w.u64v(reg.cells_.link_count());

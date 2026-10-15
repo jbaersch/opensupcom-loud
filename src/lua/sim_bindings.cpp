@@ -3383,12 +3383,13 @@ static void read_rect(lua_State* L, int idx, f32& x0, f32& z0, f32& x1, f32& z1)
     }
 }
 
-/// Moho's rect queries (cfunc_GetUnitsInRectL, cfunc_GetReclaimablesInRectL)
+/// Moho's rect queries (GetUnitsInRect, GetReclaimablesInRect, GetEntitiesInRect)
 /// take a Rect, or x0, z0, x1, z1, and give what the collision cells under it
-/// hold (CollisionCells): each unit, and with `props` each prop, whose
+/// hold (CollisionCells): each unit, with `props` each prop, and with
+/// `others` each projectile/entity, whose
 /// collision box touches those cells, in their order. A destroyed one is
 /// still there until the tick ends, as in Moho. Nil if there is none.
-static int push_rect_gather(lua_State* L, bool props) {
+static int push_rect_gather(lua_State* L, bool props, bool others = false) {
     auto* sim = get_sim(L);
     if (!sim) {
         lua_pushnil(L);
@@ -3404,7 +3405,7 @@ static int push_rect_gather(lua_State* L, bool props) {
         z1 = static_cast<f32>(luaL_checknumber(L, 4));
     }
     const auto found = sim->entity_registry().collision_cells().gather(
-        sim::CollisionCells::query_rect(x0, z0, x1, z1), true, props);
+        sim::CollisionCells::query_rect(x0, z0, x1, z1), true, props, others);
     lua_newtable(L);
     const int result = lua_gettop(L);
     int n = 0;
@@ -3423,6 +3424,12 @@ static int push_rect_gather(lua_State* L, bool props) {
 // GetUnitsInRect(rect) or (x0, z0, x1, z1): the units there, or nil.
 static int l_GetUnitsInRect(lua_State* L) {
     return push_rect_gather(L, false);
+}
+
+// Moho's cfunc_GetEntitiesInRectL (0x0075AAB0): all collision families,
+// including projectiles and generic entities, in the same cell order.
+static int l_GetEntitiesInRect(lua_State* L) {
+    return push_rect_gather(L, true, true);
 }
 
 // Math helpers
@@ -5780,6 +5787,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
 
     // Spatial queries
     state.register_function("GetUnitsInRect", l_GetUnitsInRect);
+    state.register_function("GetEntitiesInRect", l_GetEntitiesInRect);
     state.register_function("GetReclaimablesInRect", l_GetReclaimablesInRect);
     state.register_function("GetUnitBlueprintByName", l_GetUnitBlueprintByName);
 

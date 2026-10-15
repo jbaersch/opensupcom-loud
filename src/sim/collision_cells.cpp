@@ -46,12 +46,14 @@ void CollisionCells::init(u32 width, u32 height) {
     const size_t cells = initialized() ? static_cast<size_t>(width_) * height_ : 0;
     units_.assign(cells, {});
     props_.assign(cells, {});
+    others_.assign(cells, {});
     moves_.clear();
 }
 
 void CollisionCells::clear() {
     for (auto& cell : units_) cell.clear();
     for (auto& cell : props_) cell.clear();
+    for (auto& cell : others_) cell.clear();
     moves_.clear();
 }
 
@@ -97,7 +99,7 @@ std::optional<CollisionCells::Rect> CollisionCells::cells_of(const Entity& e) co
 std::vector<std::vector<Entity*>>* CollisionCells::lists_for(const Entity& e) {
     if (e.is_unit()) return &units_;
     if (e.is_prop()) return &props_;
-    return nullptr;
+    return &others_;
 }
 
 void CollisionCells::add(Entity& e) {
@@ -177,7 +179,7 @@ void CollisionCells::advance() {
     if (moves_.empty()) moves_.swap(moves); // keep the capacity
 }
 
-std::vector<Entity*> CollisionCells::gather(const Rect& r, bool units, bool props) {
+std::vector<Entity*> CollisionCells::gather(const Rect& r, bool units, bool props, bool others) {
     std::vector<Entity*> out;
     if (!initialized()) return out;
     const u64 mark = ++gather_;
@@ -197,6 +199,7 @@ std::vector<Entity*> CollisionCells::gather(const Rect& r, bool units, bool prop
             const u32 index = (row + static_cast<u32>(i)) & last_index_;
             if (units) take(units_[index]);
             if (props) take(props_[index]);
+            if (others) take(others_[index]);
         }
     }
     return out;
