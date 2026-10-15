@@ -340,11 +340,18 @@ static int weapon_SetOnTransport(lua_State* L) {
 
 static int weapon_GetProjectileBlueprint(lua_State* L) {
     auto* w = check_weapon(L);
-    if (w && !w->projectile_bp_id.empty()) {
-        lua_pushstring(L, w->projectile_bp_id.c_str());
-    } else {
-        lua_pushnil(L);
+    auto* store = LuaState::get_blueprint_store(L);
+    // Moho returns the current projectile's shared blueprint table, not
+    // its identifier. LOUD's silo callbacks retain it for GetBuildCosts.
+    if (w && store && !w->projectile_bp_id.empty()) {
+        const auto* bp = store->find(w->projectile_bp_id);
+        if (bp && bp->type == blueprints::BlueprintType::Projectile) {
+            store->push_lua_table(*bp, L);
+            if (lua_istable(L, -1)) return 1;
+            lua_pop(L, 1);
+        }
     }
+    lua_pushnil(L);
     return 1;
 }
 
