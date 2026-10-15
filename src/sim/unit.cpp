@@ -636,10 +636,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
     air_held_ = false;
     if (!tick_lifecycle(dt, ctx)) return;
 
-    // Manipulators (rotators, animators, sliders, aim controllers) move
-    // before the unit's orders run, as Moho's Unit::MotionTick updates them
-    // ahead of the task stage: an order sees this tick's aim (a build arm
-    // come on target), and what an order sets plays from the next tick.
+    // Work arms and animation advance before their task stage: an order
+    // sees a build arm that came on target. Weapon aims instead advance
+    // after body motion and fresh target selection, before firing below.
     tick_manipulators(static_cast<f32>(dt), ctx.L);
     if (destroyed() || !in_registry()) return;
 
@@ -1033,7 +1032,7 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting
         update_motion_turn(L);
         for (auto& weapon : weapons_) {
             if (destroyed() || dying_) break;
-            weapon->update(*this, registry, L, ctx.sim);
+            weapon->update(*this, registry, L, ctx.sim, static_cast<f32>(dt));
         }
         // A weapon's own pick for an idle aircraft: its attack order,
         // clearing the queue, issued as the sim's own (Moho's
@@ -3942,6 +3941,36 @@ f32 Unit::anim_motion_scale(f32 dt) const {
     return scale;
 }
 
+namespace {
+
+// Wake only after the manipulator has solved this frame, including weapon
+// aims deferred until after body motion. Waking queues a thread for the
+// scheduler; it does not run source code inside this pose update.
+void wake_manipulator_waiter(Manipulator& manipulator, lua_State* L) {
+    if (!L || !manipulator.is_at_goal() || !manipulator.has_waiting_thread()) return;
+    lua_pushstring(L, "osc_thread_mgr");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* manager = static_cast<ThreadManager*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (manager) {
+        lua_pushstring(L, "osc_sim_state");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        const auto* sim = static_cast<SimState*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        if (sim) manager->wake(manipulator, sim->tick_count());
+    }
+    manipulator.clear_waiting_thread();
+}
+
+} // namespace
+
+void Unit::tick_weapon_aim(AimManipulator& aim, f32 dt, lua_State* L) {
+    if (aim.is_destroyed() || !aim.enabled()) return;
+    aim.tick(dt);
+    update_pose();
+    wake_manipulator_waiter(aim, L);
+}
+
 void Unit::tick_manipulators(f32 dt, lua_State* L) {
     // Reset bone matrices to identity before manipulators write their bones.
     // Each animator/rotator/slider writes only the bones it owns; unowned bones
@@ -3958,6 +3987,13 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
         Manipulator* m = manipulators_[i].get();
         if (m->is_destroyed() || !m->enabled()) continue;
         const auto* arm = dynamic_cast<const AimManipulator*>(m);
+        // Live weapon controllers solve after the body's motion and their
+        // weapon's current target selection. Inactive weapons still take
+        // that late path to advance their reset pose once; dying and build
+        // animation retain the ordinary manipulator pass.
+        if (arm && !arm->builder_arm() && !dying_ && !is_being_built() &&
+            get_weapon(arm->weapon_index()))
+            continue;
         const bool was_tracking = arm && arm->tracking();
         m->tick(dt);
         if (arm && arm->builder_arm()) {
@@ -3967,25 +4003,7 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
                                                    : "OnStopBuilderTracking");
             }
         }
-        // A thread waiting for it goes on once it is at its goal -- reached
-        // in this tick, or set so between ticks (an animator a script sets
-        // to rate 0, say).
-        if (m->is_at_goal() && m->has_waiting_thread()) {
-            // Look up ThreadManager from Lua registry
-            lua_pushstring(L, "osc_thread_mgr");
-            lua_rawget(L, LUA_REGISTRYINDEX);
-            auto* tmgr = static_cast<ThreadManager*>(lua_touserdata(L, -1));
-            lua_pop(L, 1);
-            if (tmgr) {
-                // Look up current tick from SimState in registry
-                lua_pushstring(L, "osc_sim_state");
-                lua_rawget(L, LUA_REGISTRYINDEX);
-                auto* sim = static_cast<SimState*>(lua_touserdata(L, -1));
-                lua_pop(L, 1);
-                if (sim) tmgr->wake(*m, sim->tick_count());
-            }
-            m->clear_waiting_thread();
-        }
+        wake_manipulator_waiter(*m, L);
     }
     // Free destroyed manipulators, detaching their Lua tables first.
     for (auto& m : manipulators_) {

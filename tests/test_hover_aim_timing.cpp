@@ -45,6 +45,8 @@ TEST_CASE("A circling turret tracks this tick's aircraft attitude before firing"
     bool banking = false;
     bool fast_circle = false;
     bool changing_altitude = false;
+    bool offset_reference = false;
+    float firing_tolerance = 0.5f;
     SECTION("Yawing level aircraft") {}
     SECTION("Aircraft also banks and pitches") { banking = true; }
     SECTION("A faster circle remains within the turret slew rate") {
@@ -55,6 +57,15 @@ TEST_CASE("A circling turret tracks this tick's aircraft attitude before firing"
         banking = true;
         fast_circle = true;
         changing_altitude = true;
+    }
+    SECTION("A zero tolerance weapon on a banked circle reaches its exact current solution") {
+        banking = true;
+        firing_tolerance = 0;
+    }
+    SECTION("A narrow weapon with an offset reference on a banked circle keeps firing") {
+        banking = true;
+        offset_reference = true;
+        firing_tolerance = 0.2f;
     }
     REQUIRE(lua.do_string(R"(
         return {BlueprintId = 'synthetic_hover_turret',
@@ -125,7 +136,8 @@ TEST_CASE("A circling turret tracks this tick's aircraft attitude before firing"
     osc::sim::BoneInfo muzzle;
     muzzle.name = "muzzle";
     muzzle.parent_index = 1;
-    muzzle.local_position = {0, 0, 0.5f};
+    muzzle.local_position =
+        offset_reference ? osc::sim::Vector3{0.75f, 0.3f, 1.5f} : osc::sim::Vector3{0, 0, 0.5f};
     muzzle.world_position = muzzle.local_position;
     bones.bones.push_back(muzzle);
     bones.name_to_index = {{"yaw", 0}, {"pitch", 1}, {"muzzle", 2}};
@@ -138,7 +150,7 @@ TEST_CASE("A circling turret tracks this tick's aircraft attitude before firing"
     gun->max_range = 30;
     gun->damage = 10;
     gun->rate_of_fire = 1;
-    gun->firing_tolerance = 0.5f;
+    gun->firing_tolerance = firing_tolerance;
     gun->script_class = true;
     gun->fire_control_label = "Aim";
     gun->muzzle_bone_name = "muzzle";
@@ -211,10 +223,11 @@ TEST_CASE("A circling turret tracks this tick's aircraft attitude before firing"
         CHECK((forward.x * dx + forward.y * dy + forward.z * dz) / distance > 0.9998f);
     }
     const auto shots = weapon->shots_at_target - initial_shots;
-    INFO("banking " << banking << " fast " << fast_circle << " changing altitude "
-                    << changing_altitude << " path " << path << " body step " << largest_body_step
-                    << " in range " << in_range_ticks << " aligned " << aligned_ticks
-                    << " shots " << shots);
+    INFO("tolerance " << firing_tolerance << " offset " << offset_reference << " banking "
+                      << banking << " fast " << fast_circle << " changing altitude "
+                      << changing_altitude << " path " << path << " body step " << largest_body_step
+                      << " in range " << in_range_ticks << " aligned " << aligned_ticks << " shots "
+                      << shots);
     CHECK(path > 20);
     CHECK(in_range_ticks > 380);
     // Forty seconds in a settled, reachable circle must not starve a 1 Hz

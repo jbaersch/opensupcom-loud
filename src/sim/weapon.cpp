@@ -295,14 +295,21 @@ bool Weapon::call_script(lua_State* L, const char* method, const char* arg) cons
     return result;
 }
 
-void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim) {
+void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim,
+                    f32 aim_dt) {
     if (fire_clock > 0) --fire_clock;
 
-    if (!enabled || fire_on_death) return;
+    if (!enabled || fire_on_death) {
+        update_aim(owner, registry, L, aim_dt);
+        return;
+    }
     // A source target painter deals no damage, but steers a shared turret
     // and receives the normal targeting and firing callbacks. Preserve the
     // inert non-scripted fixture/fallback path and manual launch behavior.
-    if (max_range <= 0 || (damage <= 0 && !manual_fire && !fires_through_script())) return;
+    if (max_range <= 0 || (damage <= 0 && !manual_fire && !fires_through_script())) {
+        update_aim(owner, registry, L, aim_dt);
+        return;
+    }
 
     const TargetMark previous = target_mark();
     if (manual_fire) {
@@ -311,11 +318,14 @@ void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L, const S
         take_order_target(owner, registry);
     } else {
         // HoldFire (1) = don't auto-target or fire at all
-        if (owner.fire_state() == 1) return;
+        if (owner.fire_state() == 1) {
+            update_aim(owner, registry, L, aim_dt);
+            return;
+        }
         update_targeting(owner, registry, sim);
     }
     if (aim_spot_target != target_entity_id) pick_aim_spot(registry, sim);
-    update_aim(owner, registry, L);
+    update_aim(owner, registry, L, aim_dt);
     if (owner.destroyed() || owner.is_dying()) return; // a tracking callback may kill it
 
     if (L && fires_through_script()) {
@@ -712,7 +722,7 @@ const AimManipulator* Weapon::fire_control(const Unit& owner) const {
     return first;
 }
 
-void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L) {
+void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L, f32 dt) {
     // Collect first: a tracking callback may add manipulators (the vector
     // may grow) or destroy them (they stay allocated until the unit's
     // manipulators tick).
@@ -749,13 +759,14 @@ void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L) {
             } else {
                 aim->set_unsolved();
             }
-            // The target may have changed since the controller's tick.
-            // Refresh its firing eligibility without advancing the pose;
-            // an old OnTarget must not permit a shot in the old direction.
-            aim->tick(0.0f);
         } else {
             aim->clear_target();
         }
+        // Moho's MotionTick moves the hull before updating manipulators.
+        // Solve against this body's current attitude and this target once;
+        // a second zero-time solve would invalidate an exact solution as
+        // its own muzzle moved. Do not reuse last tick's OnTarget instead.
+        owner.tick_weapon_aim(*aim, dt, L);
         if (!scripted || was_tracking == aiming) continue;
         const std::string label = aim->label(); // the callback may free the aim
         call_script(L, aiming ? "OnStartTracking" : "OnStopTracking", label.c_str());

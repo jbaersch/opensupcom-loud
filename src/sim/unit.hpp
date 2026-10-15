@@ -23,7 +23,10 @@
 #include <utility>
 #include <vector>
 
-namespace osc::sim { class Manipulator; }
+namespace osc::sim {
+class Manipulator;
+class AimManipulator;
+} // namespace osc::sim
 namespace osc::blueprints { class BlueprintStore; }
 
 struct lua_State;
@@ -1319,6 +1322,9 @@ public:
     Manipulator* add_manipulator(std::unique_ptr<Manipulator> m);
     void remove_manipulator(Manipulator* m);
     void tick_manipulators(f32 dt, lua_State* L);
+    /// A weapon controller advances once after this tick's body motion and
+    /// fresh target selection; publish its pose before its weapon fires.
+    void tick_weapon_aim(AimManipulator& aim, f32 dt, lua_State* L);
     /// Moho's CCollisionManipulator::ManipulatorUpdate, once the pose has
     /// moved: each enabled collision detector's watched bones that crossed
     /// their line this tick, told to the script as

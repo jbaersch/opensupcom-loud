@@ -280,8 +280,8 @@ public:
     const AimManipulator* fire_control(const Unit& owner) const;
 
     /// Per tick: advance the fire clock, pick targets, fire when ready.
-    void update(Unit& owner, EntityRegistry& registry, lua_State* L,
-                const SimState* sim = nullptr);
+    void update(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim = nullptr,
+                f32 aim_dt = 0);
 
     /// Fire the weapon at current target. Returns true if fired.
     /// Fire one projectile from `spawn_pos` at `target` (when null: at its
@@ -319,7 +319,7 @@ private:
     void take_order_target(const Unit& owner, const EntityRegistry& registry);
     /// Hand the target to this weapon's aim controllers (or take it away),
     /// telling the script OnStartTracking/OnStopTracking(label).
-    void update_aim(Unit& owner, EntityRegistry& registry, lua_State* L);
+    void update_aim(Unit& owner, EntityRegistry& registry, lua_State* L, f32 dt);
     /// No BallisticArc, but its shots fall and don't track: Moho's
     /// CAimManipulator::Aim lobs them on the low arc.
     bool lobs_falling_shots() const;
