@@ -3051,15 +3051,26 @@ Quaternion tilt_to(const Quaternion& q, const Vector3& normal) {
 // Moho's CUnitMotion::SnapToGround (from CalcMoveHover and CalcMoveLand).
 Unit::GroundStance Unit::ground_stance(const map::Terrain* terrain, f32 x, f32 z,
                                        const Quaternion& facing) const {
+    // CUnitMotion::MoveTo (0x006B92E0) normalizes the orientation produced
+    // by motion before committing it. Both the navigator and a stationary
+    // hover's ground snap pass here; repeated tilts otherwise amplify a
+    // small norm error. Keep the raw entity/Lua orientation setter exact.
+    const auto stance = [](f32 y, Quaternion q) {
+        const f32 length = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+        if (length > 0.0f) {
+            q = {q.x / length, q.y / length, q.z / length, q.w / length};
+        }
+        return GroundStance{y, q};
+    };
     if (!terrain) {
-        return {position().y, facing};
+        return stance(position().y, facing);
     }
     const Unit* platform = raised_platform();
     const bool hover = is_hover();
     if (!snaps_to_ground()) {
         const f32 ground =
             walks_seabed() ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
-        return {platform ? ground + platform->raised_platform_height(x, z) : ground, facing};
+        return stance(platform ? ground + platform->raised_platform_height(x, z) : ground, facing);
     }
     const auto corner = [&](f32 dx, f32 dz) {
         const Vector3 d = quat_rotate(facing, {dx, 0, dz});
@@ -3096,7 +3107,7 @@ Unit::GroundStance Unit::ground_stance(const map::Terrain* terrain, f32 x, f32 z
         normal.y += hover_tilt_.y + wobble_offset_.y;
         normal.z += hover_tilt_.z + wobble_offset_.z;
     }
-    return {y, tilt_to(facing, normal)};
+    return stance(y, tilt_to(facing, normal));
 }
 
 namespace {

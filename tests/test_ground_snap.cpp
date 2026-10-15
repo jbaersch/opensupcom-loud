@@ -237,6 +237,101 @@ TEST_CASE("A hover unit draws its wobble from the sim's stream every fifth tick"
     CHECK(random.words_drawn() == 6);
 }
 
+TEST_CASE("A stationary hover keeps a finite unit orientation through repeated ground tilts",
+          "[ground_snap][hover-stability]") {
+    const auto terrain = ridge(0.0f, false);
+    const auto hover = unit("RULEUMT_Hover", 0.0f);
+    // UAL0201 is a surface hover with BankingSlope=0 and MaxAcceleration=1.7.
+    // No movement, banking, wobble or neighbour is needed to exercise its
+    // every-tick ground snap on a slope.
+    hover->set_hover_physics({0.0f, 1.7f, 0.0f, 0.0f});
+    hover->set_position({70.0f, kBase + 4.0f, 64.0f});
+    auto q = osc::sim::Quaternion{0.0f, 0.0f, -0.38268343f, 0.92387953f};
+    q.w = std::nextafter(q.w, 2.0f); // ordinary one-ULP positive norm error
+    hover->set_orientation(q);
+    const auto norm_squared = [](const osc::sim::Quaternion& value) {
+        return double{value.x} * value.x + double{value.y} * value.y +
+               double{value.z} * value.z + double{value.w} * value.w;
+    };
+    REQUIRE(norm_squared(q) > 1.0);
+    REQUIRE(norm_squared(q) == Approx(1.0).margin(1e-6));
+
+    osc::sim::SimRandom random;
+    double largest_norm_error = 0;
+    for (osc::u32 tick = 1; tick <= 50000; ++tick) {
+        hover->note_tick_position();
+        hover->tick_hover(&terrain, tick, random);
+        const auto& p = hover->position();
+        const auto& facing = hover->orientation();
+        INFO("hover tick " << tick);
+        REQUIRE((std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z) &&
+                 std::isfinite(facing.x) && std::isfinite(facing.y) &&
+                 std::isfinite(facing.z) && std::isfinite(facing.w)));
+        largest_norm_error = std::max(largest_norm_error, std::abs(norm_squared(facing) - 1.0));
+    }
+    CHECK(largest_norm_error < 1e-5);
+    CHECK(hover->position().x == 70.0f);
+    CHECK(hover->position().z == 64.0f);
+    CHECK(hover->position().y == Approx(kBase + 4.0f).margin(1e-4));
+}
+
+TEST_CASE("A hover crossing opposite slopes keeps its pose finite at different headings",
+          "[ground_snap][hover-stability]") {
+    const auto terrain = ridge(0.0f, false);
+    for (const f32 heading : {0.3f, 0.8f, 1.7f, 3.0f}) {
+        const auto hover = unit("RULEUMT_Hover", heading);
+        hover->set_hover_physics({0.0f, 1.7f, 0.0f, 0.0f});
+        auto q = osc::sim::euler_to_quat(heading, 0.14f, -0.07f);
+        q.w = std::nextafter(q.w, 2.0f);
+        hover->set_orientation(q);
+        osc::sim::SimRandom random;
+        double largest_norm_error = 0;
+        for (osc::u32 tick = 1; tick <= 20000; ++tick) {
+            // Move the snap point between the two sides of the ridge,
+            // retaining the previous native tilt as the next input.
+            const f32 x = (tick / 250) % 2 == 0 ? 58.0f : 70.0f;
+            const auto before = hover->position();
+            hover->set_position({x, before.y, 64.0f});
+            hover->note_tick_position();
+            hover->tick_hover(&terrain, tick, random);
+            const auto& p = hover->position();
+            const auto& facing = hover->orientation();
+            INFO("heading " << heading << ", hover tick " << tick);
+            REQUIRE((std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z) &&
+                     std::isfinite(facing.x) && std::isfinite(facing.y) &&
+                     std::isfinite(facing.z) && std::isfinite(facing.w)));
+            const double norm_squared =
+                double{facing.x} * facing.x + double{facing.y} * facing.y +
+                double{facing.z} * facing.z + double{facing.w} * facing.w;
+            largest_norm_error = std::max(largest_norm_error, std::abs(norm_squared - 1.0));
+        }
+        CHECK(largest_norm_error < 1e-5);
+    }
+}
+
+TEST_CASE("Native ground motion normalizes a finite orientation at its commit boundary",
+          "[ground_snap][hover-stability][motion-orientation]") {
+    const auto terrain = ridge(0.0f, false);
+    const auto hover = unit("RULEUMT_Hover", 0.8f);
+    auto q = osc::sim::euler_to_quat(0.8f, 0.0f, 0.0f);
+    constexpr f32 scale = 1.0001f;
+    q = {q.x * scale, q.y * scale, q.z * scale, q.w * scale};
+    // Raw entity assignment remains exact; this assertion does not require
+    // changing Lua SetOrientation. CUnitMotion::MoveTo normalizes the pose
+    // produced by native motion before committing it.
+    hover->set_orientation(q);
+    CHECK(hover->orientation().y == q.y);
+    CHECK(hover->orientation().w == q.w);
+    hover->stand_on_ground(&terrain, {20.0f, kBase, 64.0f}, hover->orientation());
+    const auto& facing = hover->orientation();
+    const double norm_squared =
+        double{facing.x} * facing.x + double{facing.y} * facing.y +
+        double{facing.z} * facing.z + double{facing.w} * facing.w;
+    CHECK(norm_squared == Approx(1.0).margin(1e-6));
+    CHECK(osc::sim::quat_yaw(facing) == Approx(0.8f).margin(1e-5));
+    check_vec(hover->position(), 20.0f, kBase, 64.0f);
+}
+
 TEST_CASE("A turret on a slope aims and lobs at a target on level ground", "[ground_snap][aim]") {
     osc::sim::BoneData bd;
     osc::sim::BoneInfo turret;
