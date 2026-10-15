@@ -916,7 +916,9 @@ Result<void> SessionManager::create_army_brain(lua_State* L,
         lua_gettable(L, ptbl);
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, ptbl);  // self
-            lua_pushstring(L, "");   // plan (empty for ArmyPool)
+            // No AI plan is assigned to the pool. An empty string is
+            // truthy in Lua and makes LOUD try to fork self[""] as a plan.
+            lua_pushnil(L);
             if (lua_pcall(L, 2, 0, 0) != 0) {
                 spdlog::warn("ArmyPool OnCreate error: {}",
                               lua_tostring(L, -1));
