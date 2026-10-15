@@ -749,6 +749,10 @@ void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L) {
             } else {
                 aim->set_unsolved();
             }
+            // The target may have changed since the controller's tick.
+            // Refresh its firing eligibility without advancing the pose;
+            // an old OnTarget must not permit a shot in the old direction.
+            aim->tick(0.0f);
         } else {
             aim->clear_target();
         }

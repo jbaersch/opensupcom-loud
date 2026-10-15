@@ -553,18 +553,19 @@ void AimManipulator::tick(f32 dt) {
 
     f32 want_heading = 0;
     f32 want_pitch = 0;
-    bool reachable = true;
+    f32 desired_heading = 0;
+    f32 desired_pitch = 0;
     if (has_target_) {
         idle_time_ = 0;
         // The target in the yaw bone's rest frame: heading about its Y axis
         // from its forward (+Z); pitch from the pitch bone, once turned.
         const BonePose yaw = rest_frame_world(*unit, yaw_bone_);
         const Quaternion to_local = quat_conjugate(yaw.rotation);
-        // A build arm aims along the line from its reference bone (the aim
-        // bone CreateBuilderArmController was given), heading and pitch alike
-        // (Moho's CBuilderArmManipulator::ComputeDirectionToReferenceBone);
-        // a weapon's controller from its yaw and pitch bones.
-        const bool from_reference = builder_arm_ && unit->bone_data()->is_valid(muzzle_bone_);
+        // Both axes aim from the reference/muzzle bone. In Moho's
+        // CAimManipulator::Aim (0x006317B0) the prior pose's muzzle position
+        // supplies the firing direction and ballistic solution. Using the
+        // turret pivots instead loses the muzzle's offset and misses.
+        const bool from_reference = unit->bone_data()->is_valid(muzzle_bone_);
         const Vector3 reference =
             from_reference ? unit->bone_world_position(muzzle_bone_) : yaw.position;
         const auto elevated = [&](const Vector3& d) {
@@ -583,19 +584,34 @@ void AimManipulator::tick(f32 dt) {
         const Vector3 w = quat_rotate(quat_axis_angle('y', -want_heading),
                                       quat_rotate(to_local, elevated(sub(target_, from))));
         want_pitch = osc::dmath::atan2(w.y, std::sqrt(w.x * w.x + w.z * w.z));
+        // Controllers on the same distinct yaw/pitch bones compose their
+        // rotations. Solve our residual angle about the other active aims,
+        // rather than asking every controller to turn the whole turret.
+        // Keep the full desired heading above for the pitch projection.
+        if (pitches && yaw_bone_ != pitch_bone_) {
+            for (const auto& manipulator : unit->manipulators()) {
+                const auto* peer = dynamic_cast<const AimManipulator*>(manipulator.get());
+                if (!peer || peer == this || peer->is_destroyed() || !peer->enabled() ||
+                    peer->yaw_bone_ != yaw_bone_ || peer->pitch_bone_ != pitch_bone_)
+                    continue;
+                want_heading -= peer->heading_;
+                want_pitch -= peer->pitch_;
+            }
+        }
         if (!full_circle) {
             // Measured about the arc's centre, so an arc across +-180 deg
             // (a rear turret) still contains the headings it should.
             const f32 centre = 0.5f * (yaw_min_ + yaw_max_);
             want_heading = centre + wrap_angle(want_heading - centre);
-            reachable = want_heading >= yaw_min_ && want_heading <= yaw_max_;
+            desired_heading = want_heading;
             want_heading = std::clamp(want_heading, yaw_min_, yaw_max_);
+        } else {
+            desired_heading = want_heading;
         }
+        desired_pitch = want_pitch;
         if (pitches) {
             // YawOnlyOnTarget: the pitch is no part of being on target (Moho's
             // CAimManipulator::CheckTracking skips the pitch lane's test).
-            if (!yaw_only_on_target_)
-                reachable = reachable && want_pitch >= pitch_min_ && want_pitch <= pitch_max_;
             want_pitch = std::clamp(want_pitch, pitch_min_, pitch_max_);
         }
     } else {
@@ -625,10 +641,15 @@ void AimManipulator::tick(f32 dt) {
     }
 
     if (!has_target_) return;
+    // Moho's CAimManipulator::CheckTracking (0x006309F0): constrain motion,
+    // then compare the actual angle with the unclamped desired angle.
+    // FiringTolerance can reach just past a mechanical stop, without
+    // enlarging the arc or accepting a target farther outside tolerance.
     const f32 heading_error =
-        std::fabs(full_circle ? wrap_angle(want_heading - heading_) : want_heading - heading_);
-    const f32 pitch_error = pitches && !yaw_only_on_target_ ? std::fabs(want_pitch - pitch_) : 0.0f;
-    on_target_ = reachable && heading_error <= tolerance_ && pitch_error <= tolerance_;
+        std::fabs(full_circle ? wrap_angle(desired_heading - heading_) : desired_heading - heading_);
+    const f32 pitch_error =
+        pitches && !yaw_only_on_target_ ? std::fabs(desired_pitch - pitch_) : 0.0f;
+    on_target_ = heading_error <= tolerance_ && pitch_error <= tolerance_;
 }
 
 void AimManipulator::apply_pose(PoseLocals& pose) {
