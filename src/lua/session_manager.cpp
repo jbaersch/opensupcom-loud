@@ -14,7 +14,9 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <string_view>
 #include <vector>
@@ -44,9 +46,22 @@ void apply_game_options_to_brain(const GameOptionsConfig& options,
     if (!options.configured || !brain) return;
 
     for (const auto& [key, value] : options.values) {
-        if (key == "UnitCap" && value.type == GameOptionValue::Type::Number) {
-            brain->set_unit_cap(static_cast<i32>(value.number_value));
+        if (key != "UnitCap") continue;
+        f64 cap = 0;
+        if (value.type == GameOptionValue::Type::Number) {
+            cap = value.number_value;
+        } else if (value.type == GameOptionValue::Type::String) {
+            // LOUD's lobby transmits e.g. "3000", retaining that string
+            // for its own scripts. The native cap still needs its value.
+            const auto& text = value.string_value;
+            const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), cap);
+            if (error != std::errc{} || end != text.data() + text.size()) continue;
+        } else {
+            continue;
         }
+        if (std::isfinite(cap) && cap >= std::numeric_limits<i32>::min() &&
+            cap <= std::numeric_limits<i32>::max() && std::floor(cap) == cap)
+            brain->set_unit_cap(static_cast<i32>(cap));
     }
 }
 

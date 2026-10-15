@@ -717,7 +717,7 @@ TEST_CASE("SessionManager applies lobby game option overrides", "[session][confi
     lua_pop(lua.raw(), 4);
 }
 
-TEST_CASE("SessionManager seeds native lobby build rules", "[session][rules]") {
+TEST_CASE("SessionManager seeds native lobby build rules", "[session][rules][unit-cap]") {
     osc::lua::LuaState lua;
     osc::sim::SimState sim(lua.raw(), nullptr);
     osc::lua::SessionManager mgr;
@@ -731,7 +731,26 @@ TEST_CASE("SessionManager seeds native lobby build rules", "[session][rules]") {
 
     osc::lua::GameOptionsConfig options;
     options.configured = true;
-    options.set_number("UnitCap", 42);
+    int expected_cap = 42;
+    SECTION("numeric retail option") {
+        options.set_number("UnitCap", 42);
+    }
+    SECTION("LOUD string option") {
+        options.set_string("UnitCap", "3000");
+        expected_cap = 3000;
+    }
+    SECTION("invalid string retains the default") {
+        options.set_string("UnitCap", "3000units");
+        expected_cap = 1000;
+    }
+    SECTION("overflow retains the default") {
+        options.set_number("UnitCap", 1e100);
+        expected_cap = 1000;
+    }
+    SECTION("fractional cap retains the default") {
+        options.set_number("UnitCap", 1500.5);
+        expected_cap = 1000;
+    }
     mgr.set_game_options(options);
 
     auto result = mgr.start_session(lua, osc::vfs::VirtualFileSystem{}, sim, meta);
@@ -740,7 +759,7 @@ TEST_CASE("SessionManager seeds native lobby build rules", "[session][rules]") {
     for (int army = 0; army < 2; ++army) {
         auto* brain = sim.get_army(army);
         REQUIRE(brain != nullptr);
-        CHECK(brain->unit_cap() == 42);
+        CHECK(brain->unit_cap() == expected_cap);
     }
 }
 
