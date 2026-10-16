@@ -6,6 +6,9 @@ for the upstream project. Upstream's MIT license, copyright and third-party
 notices remain intact. It contains engine changes and synthetic regression tests;
 you must supply your own legally obtained FA installation and LOUD data.
 
+Development continues on `codex/loud` in the public fork. The
+[fork workflow](fork-workflow.md) describes commits, validation and normal pushes.
+
 ## Branch and review scope
 
 The branch starts at upstream commit
@@ -16,12 +19,13 @@ history. Commit author attribution is preserved; AI assistance was used in the
 development and review. See the [commit index](loud-commit-index.md) and
 [implementation contract](plans/2026-10-16-loud-fork-contract.md).
 
-Upstream `main` was checked on 2026-10-16 at
+The initial acceptance checked upstream `main` at
 `68c79d06cfe6a40b58c69b765f8cddb4d88ad428`. Its four subsequent mainline commits
 are not merged here: the warp/world-shape, fog and cartographic rendering work
 needs its own integration review. The open camera fix
 [#682](https://github.com/bwiemz/supcom-engine/pull/682) was also inspected and is
-not included. This branch is suitable for reviewing individual fixes against
+not included in that acceptance. Later upstream revisions remain separate on
+`main` until they receive an integration review. This branch is suitable for reviewing individual fixes against
 their tested base, rather than claiming to be the newest upstream release.
 
 Useful review groups, in dependency order:

@@ -3,6 +3,7 @@
 Experimental contribution branch of [bwiemz/supcom-engine](https://github.com/bwiemz/supcom-engine).
 For this fork's changes, build/run instructions, validation and remaining gaps,
 start with [LOUD compatibility and combat-tick work](docs/loud-fork.md).
+Active development uses `codex/loud`; see the [fork workflow](docs/fork-workflow.md).
 No game data is included. The project overview below is inherited from upstream;
 it is not an additional LOUD acceptance claim.
 

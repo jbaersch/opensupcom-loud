@@ -20,6 +20,7 @@ __pycache__/
 /docs/local/
 /START_HERE.md
 /.codex/
+/LOCAL_WORKSPACE.md
 *.scd
 *.nx2
 *.scmap
