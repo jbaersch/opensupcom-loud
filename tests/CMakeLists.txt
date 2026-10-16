@@ -1,6 +1,7 @@
 add_executable(osc_tests
     test_session_start.cpp
     test_session_failures.cpp
+    test_session_brain_initialization.cpp
     test_ui_startup.cpp
     test_ui_category_selection.cpp
     test_navigator_goal.cpp

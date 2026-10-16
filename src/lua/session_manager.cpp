@@ -488,12 +488,14 @@ Result<void> SessionManager::start_session(LuaState& state,
         push_player_options(L, cfg); // validated before any initialization
         const std::string nickname = player_nickname(L, lua_gettop(L), armies[i]);
         lua_pop(L, 1);
+        // Source OnCreateArmyBrain callbacks can cache GetFactionIndex.
+        // Every launch path must expose the slot before those callbacks run.
+        apply_config_to_brain(cfg, sim.get_army(static_cast<i32>(i)), game_colors);
         auto result = create_army_brain(L, sim, static_cast<i32>(i), armies[i], nickname);
         if (!result) {
             return Error("Failed to create brain for " + armies[i] + ": " + result.error().message);
         } else {
             auto* brain = sim.get_army(static_cast<i32>(i));
-            apply_config_to_brain(slot_config_for_army(static_cast<int>(i)), brain, game_colors);
             apply_game_options_to_brain(game_options_, brain);
             brains_created++;
         }
