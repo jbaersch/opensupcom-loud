@@ -155,8 +155,9 @@ TEST_CASE("Route replacement preserves results after many distinct requests and 
     // More independently obstructed inputs than the small derived cache can
     // retain. No saved or caller-visible state depends on replacement order.
     for (int i = 0; i < 300; ++i) {
+        const int row = i / 40;
         compare_fresh(paths, world.grid, 10.5f + static_cast<f32>(i % 40),
-                      24.5f + static_cast<f32>(i / 40), 108.25f, 64.75f, "Land");
+                      24.5f + static_cast<f32>(row), 108.25f, 64.75f, "Land");
     }
     same_path(compare_fresh(paths, world.grid, 20.5f, 64.5f, 108.25f, 64.75f, "Land"), original);
     for (const auto& layer : {"Land", "Air"})
