@@ -107,6 +107,16 @@ public:
             &accept);
     }
 
+    /// Visit each live unit in the exact radius, with no allocation or
+    /// ordering guarantee. The synchronous visitor must not mutate entities
+    /// or the registry; reductions must resolve ties independently of order.
+    template <typename F>
+    void visit_units_in_radius(f32 x, f32 z, f32 radius, const F& visit) const {
+        visit_units_in_radius_impl(
+            x, z, radius, [](Entity& e, const void* ctx) { (*static_cast<const F*>(ctx))(e); },
+            &visit);
+    }
+
     /// Collect entity IDs within an axis-aligned rectangle (2D, ignoring Y),
     /// in ascending id order.
     std::vector<u32> collect_in_rect(f32 x0, f32 z0, f32 x1, f32 z1) const;
@@ -135,8 +145,21 @@ public:
     template <typename F> bool any_unit_collider(f32 x0, f32 z0, f32 x1, f32 z1, F&& visit) const {
         using Visit = std::remove_reference_t<F>;
         return any_unit_collider_impl(
-            x0, z0, x1, z1,
+            x0, z0, x1, z1, nullptr, nullptr,
             [](const Entity& e, void* ctx) { return (*static_cast<Visit*>(ctx))(e); },
+            const_cast<void*>(static_cast<const void*>(&visit)));
+    }
+
+    /// The same query, skipping units rejected by a pure, synchronous predicate
+    /// before testing their shape's reach. Neither predicate nor visitor may
+    /// depend on order or number of invocations, or mutate the registry.
+    template <typename P, typename F>
+    bool any_unit_collider_if(f32 x0, f32 z0, f32 x1, f32 z1, const P& accept, F&& visit) const {
+        using Visit = std::remove_reference_t<F>;
+        return any_unit_collider_impl(
+            x0, z0, x1, z1,
+            [](const Entity& e, const void* ctx) { return (*static_cast<const P*>(ctx))(e); },
+            &accept, [](const Entity& e, void* ctx) { return (*static_cast<Visit*>(ctx))(e); },
             const_cast<void*>(static_cast<const void*>(&visit)));
     }
 
@@ -233,11 +256,14 @@ private:
     /// gathers find a destroyed one until the end of the beat.
     CollisionCells cells_;
 
-    bool any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1, bool (*visit)(const Entity&, void*),
-                                void* ctx) const;
+    bool any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1,
+                                bool (*accept)(const Entity&, const void*), const void* accept_ctx,
+                                bool (*visit)(const Entity&, void*), void* ctx) const;
     std::vector<Entity*> units_in_radius_impl(f32 x, f32 z, f32 radius,
                                               bool (*accept)(const Entity&, const void*),
                                               const void* ctx) const;
+    void visit_units_in_radius_impl(f32 x, f32 z, f32 radius, void (*visit)(Entity&, const void*),
+                                    const void* ctx) const;
     void world_to_cell(f32 wx, f32 wz, i32& cx, i32& cz) const;
     size_t cell_index(i32 cx, i32 cz) const;
     void grid_insert(Entity& entity, i32 cx, i32 cz);

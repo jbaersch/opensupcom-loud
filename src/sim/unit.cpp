@@ -3276,26 +3276,28 @@ const Unit* Unit::raised_platform() const {
     const f32 hz = std::abs(ax.z) + std::abs(az.z);
     const Unit* nearest = nullptr;
     f32 nearest_d2 = std::numeric_limits<f32>::infinity();
-    registry->any_unit_collider(at.x - hx, at.z - hz, at.x + hx, at.z + hz, [&](const Entity& e) {
-        const auto* u = dynamic_cast<const Unit*>(&e);
-        if (!u || u == this || u->raised_platforms_.empty() || u->dying_) {
+    const auto is_platform = [this](const Entity& e) {
+        const auto* u = static_cast<const Unit*>(&e);
+        return u != this && !u->raised_platforms_.empty() && !u->dying_;
+    };
+    registry->any_unit_collider_if(
+        at.x - hx, at.z - hz, at.x + hx, at.z + hz, is_platform, [&](const Entity& e) {
+            const auto* u = static_cast<const Unit*>(&e);
+            const auto bounds = collision_bounds(*u);
+            if (!bounds || bounds->first.x > at.x + hx || bounds->second.x < at.x - hx ||
+                bounds->first.z > at.z + hz || bounds->second.z < at.z - hz ||
+                bounds->first.y > at.y + size_y_ || bounds->second.y < at.y - size_y_) {
+                return false;
+            }
+            const Vector3 p = u->position();
+            const f32 d2 = (at.x - p.x) * (at.x - p.x) + (at.y - p.y) * (at.y - p.y) +
+                           (at.z - p.z) * (at.z - p.z);
+            if (d2 < nearest_d2 || (d2 == nearest_d2 && u->entity_id() < nearest->entity_id())) {
+                nearest = u;
+                nearest_d2 = d2;
+            }
             return false;
-        }
-        const auto bounds = collision_bounds(*u);
-        if (!bounds || bounds->first.x > at.x + hx || bounds->second.x < at.x - hx ||
-            bounds->first.z > at.z + hz || bounds->second.z < at.z - hz ||
-            bounds->first.y > at.y + size_y_ || bounds->second.y < at.y - size_y_) {
-            return false;
-        }
-        const Vector3 p = u->position();
-        const f32 d2 =
-            (at.x - p.x) * (at.x - p.x) + (at.y - p.y) * (at.y - p.y) + (at.z - p.z) * (at.z - p.z);
-        if (d2 < nearest_d2 || (d2 == nearest_d2 && u->entity_id() < nearest->entity_id())) {
-            nearest = u;
-            nearest_d2 = d2;
-        }
-        return false;
-    });
+        });
     return nearest;
 }
 

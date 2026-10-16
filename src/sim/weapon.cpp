@@ -159,29 +159,6 @@ bool shooter_room(Projectile& proj, const EntityRegistry& registry) {
     return shooters.size() < cap;
 }
 
-/// The entities within `reach` of (x, z) a weapon may pick from, in id
-/// order. One that shoots units takes the grid of units alone, which a
-/// map's props and the projectiles in flight aren't in; one that shoots
-/// projectiles takes every entity (can_pick keeps the projectiles).
-std::vector<u32> target_candidates(const EntityRegistry& registry, bool projectiles,
-                                   const Unit& owner, const SimState* sim, f32 reach) {
-    const Vector3& at = owner.position();
-    if (projectiles) return registry.collect_in_radius(at.x, at.z, reach);
-    const i32 owner_army = owner.army();
-    // Alliance checks are pure during this unit scan. Avoid collecting and
-    // sorting units that can_pick will reject; retain all later eligibility
-    // checks and their canonical id order.
-    const std::vector<Entity*> units =
-        registry.units_in_radius_if(at.x, at.z, reach, [owner_army, sim](const Entity& unit) {
-            return unit.army() >= 0 &&
-                   (sim ? sim->is_enemy(owner_army, unit.army()) : unit.army() != owner_army);
-        });
-    std::vector<u32> ids;
-    ids.reserve(units.size());
-    for (const Entity* unit : units) ids.push_back(unit->entity_id());
-    return ids;
-}
-
 const Weapon* primary_weapon(const Unit& owner) {
     for (const auto& w : owner.weapons()) {
         if (w->weapon_index == 0) {
@@ -594,24 +571,25 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     }
 
     // Best: the earliest priority, then the nearest, then the lowest id
-    // (candidates come in id order, so ties keep the first).
+    // (unit candidates are visited without sorting, so compare ids explicitly).
     u32 best_id = 0;
     int best_priority = 0;
     bool best_in_arc = false;
     f32 best_dist2 = 0;
     const f32 reach = max_range * std::max(1.0f, tracking_radius);
     static const CategoryName kBenign{"BENIGN"};
-    for (const u32 id : target_candidates(registry, targets_projectiles, owner, sim, reach)) {
-        Entity* e = registry.find(id);
-        if (!e || !can_target(owner, *e, sim)) continue;
+    const auto consider = [&](Entity& candidate) {
+        Entity* e = &candidate;
+        const u32 id = e->entity_id();
+        if (!can_target(owner, *e, sim)) return;
         if (e->is_unit() && static_cast<const Unit&>(*e).has_category(kBenign)) {
-            continue;
+            return;
         }
         // A missile already held by as many weapons as it wants shooting at
         // it (a nuke's DesiredShooterCap is 1) is left to them.
-        if (e->is_projectile() && !shooter_room(static_cast<Projectile&>(*e), registry)) continue;
+        if (e->is_projectile() && !shooter_room(static_cast<Projectile&>(*e), registry)) return;
         const int priority = priority_of(*e);
-        if (priority < 0) continue;
+        if (priority < 0) return;
         const f32 dx = e->position().x - owner.position().x;
         const f32 dz = e->position().z - owner.position().z;
         const f32 dist2 = dx * dx + dz * dz;
@@ -621,12 +599,30 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         const bool better_arc = in_arc && !best_in_arc;
         if (best_id == 0 || priority < best_priority ||
             (priority == best_priority &&
-             (better_arc || (in_arc == best_in_arc && dist2 < best_dist2)))) {
+             (better_arc || (in_arc == best_in_arc &&
+                             (dist2 < best_dist2 ||
+                              (!targets_projectiles && dist2 == best_dist2 && id < best_id)))))) {
             best_id = id;
             best_priority = priority;
             best_in_arc = in_arc;
             best_dist2 = dist2;
         }
+    };
+    if (targets_projectiles) {
+        // Preserve canonical traversal and shooter-list pruning for missiles.
+        for (const u32 id :
+             registry.collect_in_radius(owner.position().x, owner.position().z, reach))
+            if (Entity* e = registry.find(id)) consider(*e);
+    } else {
+        const i32 owner_army = owner.army();
+        registry.visit_units_in_radius(
+            owner.position().x, owner.position().z, reach, [&](Entity& candidate) {
+                // Keep the accepted directed-army filter, before the full
+                // eligibility test. No callback or RNG runs during this walk.
+                if (candidate.army() >= 0 && (sim ? sim->is_enemy(owner_army, candidate.army())
+                                                  : candidate.army() != owner_army))
+                    consider(candidate);
+            });
     }
     // A recheck changes target only for a better priority.
     if (current_priority >= 0 && (best_id == 0 || best_priority >= current_priority)) return;

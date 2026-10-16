@@ -262,6 +262,30 @@ std::vector<Entity*> EntityRegistry::units_in_radius_impl(
     return result;
 }
 
+void EntityRegistry::visit_units_in_radius_impl(f32 x, f32 z, f32 radius,
+                                                void (*visit)(Entity&, const void*),
+                                                const void* ctx) const {
+    const f32 r2 = radius * radius;
+    const auto within = [&](const Entity& e) {
+        const f32 dx = e.position().x - x;
+        const f32 dz = e.position().z - z;
+        return dx * dx + dz * dz <= r2;
+    };
+    if (!grid_initialized_) {
+        for_each_unit([&](Entity& e) {
+            if (!e.destroyed() && within(e)) visit(e, ctx);
+        });
+        return;
+    }
+    i32 cx_min, cz_min, cx_max, cz_max;
+    world_to_cell(x - radius, z - radius, cx_min, cz_min);
+    world_to_cell(x + radius, z + radius, cx_max, cz_max);
+    for (i32 cz = cz_min; cz <= cz_max; ++cz)
+        for (i32 cx = cx_min; cx <= cx_max; ++cx)
+            for (const UnitRef& unit : unit_cells_[cell_index(cx, cz)])
+                if (!unit.entity->destroyed() && within(*unit.entity)) visit(*unit.entity, ctx);
+}
+
 std::vector<u32> EntityRegistry::collect_in_rect(f32 x0, f32 z0,
                                                   f32 x1, f32 z1) const {
     std::vector<u32> result;
@@ -418,6 +442,8 @@ void EntityRegistry::notify_collision_shape_changed(Entity& entity) {
 }
 
 bool EntityRegistry::any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1,
+                                            bool (*accept)(const Entity&, const void*),
+                                            const void* accept_ctx,
                                             bool (*visit)(const Entity&, void*), void* ctx) const {
     if (x0 > x1) std::swap(x0, x1);
     if (z0 > z1) std::swap(z0, z1);
@@ -436,6 +462,7 @@ bool EntityRegistry::any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1,
     // every comparison, so the tests are written to keep it), only
     // COLLIDER_REACH filters, as before.
     const auto may_reach = [&](const Entity& e) {
+        if (accept && !accept(e, accept_ctx)) return false;
         if (!near(e, COLLIDER_REACH)) return false;
         const Quaternion& q = e.orientation();
         const f32 norm = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
@@ -460,7 +487,9 @@ bool EntityRegistry::any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1,
     }
     for (const u32 id : large_colliders_) {
         const Entity* e = find(id);
-        if (e && e->is_unit() && near(*e, e->shape_reach()) && visit(*e, ctx)) return true;
+        if (e && e->is_unit() && (!accept || accept(*e, accept_ctx)) &&
+            near(*e, e->shape_reach()) && visit(*e, ctx))
+            return true;
     }
     return false;
 }
