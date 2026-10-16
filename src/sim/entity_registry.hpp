@@ -19,7 +19,9 @@ class Entity;
 class EntityRegistry {
     friend struct StateIO; // snapshots (state_io.hpp)
 public:
-    static constexpr u32 CELL_SIZE = 32;
+    /// Broadphase acceleration only; exact geometry and ID ordering follow.
+    /// Moho's separately ordered CollisionCells remain four units wide.
+    static constexpr u32 CELL_SIZE = 16;
     /// Props have their own, finer grid: a forest puts hundreds in a CELL_SIZE cell.
     static constexpr u32 PROP_CELL_SIZE = 4;
 
