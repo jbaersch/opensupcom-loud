@@ -72,7 +72,11 @@ void SimState::occupy_footprint(Unit& unit) {
     const Footprint fp{unit.position().x, unit.position().z,
                        unit.footprint_size_x(), unit.footprint_size_z()};
     if (!occupied_footprints_.emplace(unit.entity_id(), fp).second) return;
+    const auto before = pathfinding_grid_->version();
     pathfinding_grid_->mark_obstacle(fp.x, fp.z, fp.size_x, fp.size_z);
+    if (pathfinding_grid_->version() != before)
+        entity_registry_.for_each_unit(
+            [](Entity& e) { static_cast<Unit&>(e).navigator().invalidate_failed_request(); });
 }
 
 void SimState::occupy_ground(u32 id, GroundOccupant occupant) {
@@ -160,7 +164,12 @@ void SimState::on_entity_unregistered(Entity& entity) {
         it != occupied_footprints_.end()) {
         if (pathfinding_grid_) {
             const auto& fp = it->second;
+            const auto before = pathfinding_grid_->version();
             pathfinding_grid_->clear_obstacle(fp.x, fp.z, fp.size_x, fp.size_z);
+            if (pathfinding_grid_->version() != before)
+                entity_registry_.for_each_unit([](Entity& e) {
+                    static_cast<Unit&>(e).navigator().invalidate_failed_request();
+                });
         }
         occupied_footprints_.erase(it);
     }
@@ -535,9 +544,12 @@ bool SimState::flatten_map_rect(i32 x, i32 z, i32 size_x, i32 size_z, f32 elevat
     }
     // The default pathing's cells there are classed afresh (structures
     // stay marked on them).
+    bool grid_changed = false;
     if (pathfinding_grid_) {
+        const auto before = pathfinding_grid_->version();
         pathfinding_grid_->refresh_terrain(terrain_->heightmap(), flat->x0, flat->z0, flat->x1,
                                            flat->z1);
+        grid_changed = pathfinding_grid_->version() != before;
     }
     const f32 mid_x = static_cast<f32>(lo_x + flat->x1) * 0.5f;
     const f32 mid_z = static_cast<f32>(lo_z + flat->z1) * 0.5f;
@@ -545,6 +557,7 @@ bool SimState::flatten_map_rect(i32 x, i32 z, i32 size_x, i32 size_z, f32 elevat
     const auto reach_z = static_cast<f32>(flat->z1 - lo_z);
     entity_registry_.for_each_unit([&](Entity& e) {
         auto& unit = static_cast<Unit&>(e);
+        if (grid_changed) unit.navigator().invalidate_failed_request();
         if (unit.destroyed() || unit.is_dying() || !unit.is_mobile()) {
             return;
         }

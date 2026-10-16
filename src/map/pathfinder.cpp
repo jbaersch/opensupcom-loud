@@ -29,6 +29,14 @@ static constexpr f32 HEURISTIC_WEIGHT = 1.001f;
 
 Pathfinder::Pathfinder(const PathfindingGrid& grid) : grid_(grid) {}
 
+bool Pathfinder::clear_segment(f32 start_x, f32 start_z, f32 goal_x, f32 goal_z,
+                               const std::string& layer, f32 draft, bool amphibious) const {
+    u32 sx = 0, sz = 0, gx = 0, gz = 0;
+    grid_.world_to_grid(start_x, start_z, sx, sz);
+    grid_.world_to_grid(goal_x, goal_z, gx, gz);
+    return has_line_of_sight(sx, sz, gx, gz, layer, draft, amphibious);
+}
+
 PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
                                   f32 goal_x, f32 goal_z,
                                   const std::string& layer,

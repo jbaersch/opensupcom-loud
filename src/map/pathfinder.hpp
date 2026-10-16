@@ -36,10 +36,14 @@ public:
 
     /// Find a path from start to goal for the given movement layer.
     /// Returns smoothed waypoints in world coordinates.
-    PathResult find_path(f32 start_x, f32 start_z,
-                         f32 goal_x, f32 goal_z,
-                         const std::string& layer,
+    PathResult find_path(f32 start_x, f32 start_z, f32 goal_x, f32 goal_z, const std::string& layer,
                          f32 draft = 0, bool amphibious = false) const;
+
+    /// Whether the segment crosses only passable cells and corners. A
+    /// movement step can recheck its accepted route against new obstacles
+    /// without spending an A* request.
+    bool clear_segment(f32 start_x, f32 start_z, f32 goal_x, f32 goal_z, const std::string& layer,
+                       f32 draft = 0, bool amphibious = false) const;
 
     bool can_pathfind() const { return requests_this_tick_ < MAX_REQUESTS_PER_TICK; }
     void increment_request_count() const { ++requests_this_tick_; }

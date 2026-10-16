@@ -25,14 +25,17 @@ public:
     enum class Status : u8 { Idle, Moving, WaitingForPath };
 
     /// Set goal with A* pathfinding (preferred).
-    void set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
-                  const Vector3& current_pos, const std::string& layer,
-                  f32 draft = 0, bool amphibious = false);
+    void set_goal(const Vector3& pos, const map::Pathfinder* pathfinder, const Vector3& current_pos,
+                  const std::string& layer, f32 draft = 0, bool amphibious = false);
 
     /// Set goal with straight-line movement (legacy/fallback).
     void set_goal(const Vector3& pos);
 
     void abort_move();
+
+    /// The grid changed: a remembered failure no longer describes this
+    /// world. Keep active routes and the ordinary unchanged-grid retry cap.
+    void invalidate_failed_request() { has_failed_request_ = false; }
 
     const Vector3& goal() const { return goal_; }
     Status status() const { return status_; }

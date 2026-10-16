@@ -7,6 +7,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "map/pathfinder.hpp"
+#include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
 
 #include <algorithm>
@@ -348,6 +349,42 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         return moho_active_ && sim_ && sim_->footprint_fits_at(unit.footprint(), to.x, to.z) == 0 &&
                sim_->footprint_fits_at(unit.footprint(), from.x, from.z) != 0;
     };
+    // A default path may have been accepted before a structure was built
+    // across it. Check the actual short drive segment, including a turning
+    // unit's departure from its planned line, before committing motion.
+    // From inside an obstacle it still follows the pathfinder's factory /
+    // closed-in escape route, just as Moho refuses only a valid-to-invalid
+    // step. Air and Moho navigation keep their own movement contracts.
+    const auto default_blocked = [&](const Vector3& to) {
+        if (moho_active_ || !sim_ || !sim_->pathfinding_grid() || !sim_->pathfinder()) return false;
+        const auto& grid = *sim_->pathfinding_grid();
+        u32 gx = 0, gz = 0;
+        grid.world_to_grid(from.x, from.z, gx, gz);
+        // Match Unit::set_path_goal's alternate footprint resolution (a
+        // FAVORSWATER group can use a water-only footprint).
+        const bool alt = unit.uses_alt_footprint();
+        const auto& fp = unit.footprint();
+        const bool afloat =
+            alt && (fp.caps & (blueprints::occupancy::kLand | blueprints::occupancy::kSeabed)) == 0;
+        static const std::string kWater{"Water"};
+        const std::string& layer = afloat ? kWater : unit.layer();
+        const f32 draft =
+            alt ? std::max(unit.naval_draft(), fp.min_water_depth) : unit.naval_draft();
+        const bool amphibious = !alt && (unit.is_amphibious() || unit.is_hover());
+        if (!grid.is_passable_for(gx, gz, layer, draft, amphibious)) return false;
+        return !sim_->pathfinder()->clear_segment(from.x, from.z, to.x, to.z, layer, draft,
+                                                  amphibious);
+    };
+    const auto wait_for_new_path = [&](const Quaternion& facing) {
+        status_ = Status::WaitingForPath;
+        // Refusing translation must not throw away the turn computed by
+        // this drive step. Otherwise the same heading attempts the same
+        // blocked step after every replan. As in the Moho refusal below,
+        // retain its computed turn, snapped at the position it kept.
+        unit.set_orientation(
+            terrain ? unit.ground_stance(terrain, from.x, from.z, facing).orientation : facing);
+        unit.note_drive(0, 0, max_speed, Unit::MotionTurn::Straight);
+    };
     // Refused, it is pushed back from the ground it won't fit, as Moho's
     // CalcMoveCommon pushes it (AddImpulse: its top speed x 0.01 back along
     // the step), where its footprint fits; else it stays. Where it ends.
@@ -390,6 +427,10 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
             facing = stance.orientation;
         }
         if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
+        if (default_blocked(pos)) {
+            wait_for_new_path(unit.orientation());
+            return true;
+        }
         // Braking near still, it stays put if refused: bounced and sent for a
         // fresh way here, a crowd's waiting units strand more of their number.
         if (refused(pos)) {
@@ -414,8 +455,16 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         const f32 tol = sidestep_ && waypoint_index_ == sidestep_index_ ? SIDESTEP_TOLERANCE
                                                                         : WAYPOINT_TOLERANCE;
         const bool reached = dx * dx + dz * dz <= tol * tol;
+        const f32 leg_x = next.x - wp.x, leg_z = next.z - wp.z;
+        const f32 side = (pos.x - wp.x) * leg_z - (pos.z - wp.z) * leg_x;
+        // A point far to the side of an outgoing leg has not passed this
+        // corner merely by crossing its infinite perpendicular line. Keep
+        // ordinary straight overshoots within the existing waypoint (or
+        // sidestep) tolerance, without cutting across the obstacle at a bend.
+        // The Moho navigator supplies its own short-lived target cells.
         const bool crossed =
-            (pos.x - wp.x) * (next.x - wp.x) + (pos.z - wp.z) * (next.z - wp.z) > 0;
+            (pos.x - wp.x) * leg_x + (pos.z - wp.z) * leg_z > 0 &&
+            (moho_active_ || side * side <= tol * tol * (leg_x * leg_x + leg_z * leg_z));
         if (!reached && !crossed) break;
         ++waypoint_index_;
     }
@@ -520,6 +569,10 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         facing = stance.orientation;
     }
     if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
+    if (default_blocked(pos)) {
+        wait_for_new_path(level);
+        return true;
+    }
     // Refused (as above): it bounces back, and once the push has died down
     // its steering asks for the way afresh (ProcessSplineMovement:
     // NotifyNavigatorPathRefresh). A unit against a wall is never still, so it
