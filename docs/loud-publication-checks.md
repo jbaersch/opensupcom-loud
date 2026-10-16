@@ -44,7 +44,13 @@ The large-battle suite was not rerun against the publication binary.
 
 The last local clang-tidy check covered the five C++ translation units changed
 in the combat-tick optimization, with LLVM 22.1.8 and no new findings. Preparation
-does not change C++ and does not claim a newly run whole-project lint scan.
+did not change C++ or run a new whole-project lint scan at that stage.
+
+During the later CI/documentation follow-up on 2026-10-16, the full local
+`src/` and `tests/` clang-tidy ratchet also completed with LLVM 22: 30 accepted
+findings against a baseline of 30, with no new findings. This used the same
+cached native dependency build described above; it does not substitute for the
+separate GitHub compiler, sanitizer or cross-OS results.
 
 ## Content and publication boundary
 
