@@ -38,8 +38,8 @@ jobs:
             cc: clang-18
             cxx: clang++-18
             preset: linux-debug
-            # Static checks run here: the clang-tidy ratchet, and on PRs the
-            # formatting of changed lines (LLVM 22, the baseline's version).
+            # Static checks run here: the clang-tidy ratchet and changed-line
+            # formatting on pushes and PRs (LLVM 22, the baseline's version).
             lint: true
           - name: asan
             cc: gcc-14
@@ -127,8 +127,15 @@ jobs:
         run: ctest --preset ${{ matrix.preset }} -L lint --output-on-failure
 
       - name: Format (changed lines)
-        if: matrix.lint && github.event_name == 'pull_request'
-        run: tools/check_format.sh "origin/${{ github.base_ref }}"
+        if: matrix.lint
+        env:
+          FORMAT_BASE_BRANCH: ${{ github.base_ref }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            tools/check_format.sh "origin/$FORMAT_BASE_BRANCH"
+          else
+            tools/check_format.sh origin/main
+          fi
 
   windows:
     name: windows-msvc
