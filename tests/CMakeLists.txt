@@ -12,6 +12,7 @@ add_executable(osc_tests
     test_weapon_dummy_contract.cpp
     test_weapon_candidate_walk.cpp
     test_unit_radius_visit.cpp
+    test_spatial_cell_membership.cpp
     test_entity_kill_contract.cpp
     test_cheat_spawn.cpp
     test_shared_build_site.cpp

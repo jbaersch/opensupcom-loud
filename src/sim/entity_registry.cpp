@@ -4,9 +4,49 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <optional>
 #include <spdlog/spdlog.h>
 
 namespace osc::sim {
+
+namespace {
+
+struct RadiusCells {
+    i32 x0, z0, x1, z1;
+};
+
+/// Enclose the unchanged float squared-distance predicate, including its
+/// rounding at cell boundaries. A nonfinite query uses the exact flat scan.
+std::optional<RadiusCells> radius_cells(f32 x, f32 z, f32 squared_radius, u32 width, u32 height) {
+    if (!std::isfinite(x) || !std::isfinite(z) || !std::isfinite(squared_radius))
+        return std::nullopt;
+    constexpr f32 infinity = std::numeric_limits<f32>::infinity();
+    const f32 square_limit = std::nextafter(squared_radius, infinity);
+    if (!std::isfinite(square_limit)) return std::nullopt;
+    // An accepted rounded dx*dx is <= squared_radius, so exact dx*dx is
+    // below square_limit. One outward float step beyond its square root
+    // also encloses the rounding in dx = position.x - x. This covers zero
+    // squared radii whose nonzero differences' squares underflow to zero.
+    const f32 reach =
+        std::nextafter(static_cast<f32>(std::sqrt(static_cast<f64>(square_limit))), infinity);
+    const auto cell = [](f64 coordinate, u32 count) {
+        // Clamp before the integer conversion: a valid float query can be
+        // far beyond any map. Division by the power-of-two cell size is exact.
+        const f64 index = std::floor(coordinate / EntityRegistry::CELL_SIZE);
+        return static_cast<i32>(std::clamp(index, 0.0, static_cast<f64>(count - 1)));
+    };
+    constexpr f64 wide_infinity = std::numeric_limits<f64>::infinity();
+    const auto lower = [&](f32 center, u32 count) {
+        return cell(std::nextafter(static_cast<f64>(center) - reach, -wide_infinity), count);
+    };
+    const auto upper = [&](f32 center, u32 count) {
+        return cell(std::nextafter(static_cast<f64>(center) + reach, wide_infinity), count);
+    };
+    return RadiusCells{lower(x, width), lower(z, height), upper(x, width), upper(z, height)};
+}
+
+} // namespace
 
 EntityRegistry::EntityRegistry() = default;
 EntityRegistry::~EntityRegistry() = default;
@@ -187,12 +227,13 @@ void EntityRegistry::notify_position_changed(Entity& entity) {
     entity.set_grid_cell(new_cx, new_cz);
 }
 
-std::vector<u32> EntityRegistry::collect_in_radius(f32 x, f32 z,
-                                                    f32 radius) const {
+std::vector<u32> EntityRegistry::collect_in_radius(f32 x, f32 z, f32 radius) const {
     std::vector<u32> result;
     f32 r2 = radius * radius;
 
-    if (!grid_initialized_) {
+    const auto cells =
+        grid_initialized_ ? radius_cells(x, z, r2, grid_width_, grid_height_) : std::nullopt;
+    if (!cells) {
         // Fallback to O(N) scan (already in id order)
         for_each([&](const Entity& e) {
             if (e.destroyed()) return;
@@ -203,13 +244,8 @@ std::vector<u32> EntityRegistry::collect_in_radius(f32 x, f32 z,
         return result;
     }
 
-    // Compute cell range covering the bounding box of the circle
-    i32 cx_min, cz_min, cx_max, cz_max;
-    world_to_cell(x - radius, z - radius, cx_min, cz_min);
-    world_to_cell(x + radius, z + radius, cx_max, cz_max);
-
-    for (i32 cz = cz_min; cz <= cz_max; ++cz) {
-        for (i32 cx = cx_min; cx <= cx_max; ++cx) {
+    for (i32 cz = cells->z0; cz <= cells->z1; ++cz) {
+        for (i32 cx = cells->x0; cx <= cells->x1; ++cx) {
             const auto& cell = grid_cells_[cell_index(cx, cz)];
             for (u32 id : cell) {
                 auto* e = find(id);
@@ -239,18 +275,17 @@ std::vector<Entity*> EntityRegistry::units_in_radius_impl(
         const f32 dz = e.position().z - z;
         return dx * dx + dz * dz <= r2 && (!accept || accept(e, ctx));
     };
-    if (!grid_initialized_) {
+    const auto cells =
+        grid_initialized_ ? radius_cells(x, z, r2, grid_width_, grid_height_) : std::nullopt;
+    if (!cells) {
         for_each_unit([&](Entity& e) {
             if (!e.destroyed() && within(e)) result.push_back(&e);
         });
         return result;
     }
-    i32 cx_min, cz_min, cx_max, cz_max;
-    world_to_cell(x - radius, z - radius, cx_min, cz_min);
-    world_to_cell(x + radius, z + radius, cx_max, cz_max);
     std::vector<UnitRef> found;
-    for (i32 cz = cz_min; cz <= cz_max; ++cz) {
-        for (i32 cx = cx_min; cx <= cx_max; ++cx) {
+    for (i32 cz = cells->z0; cz <= cells->z1; ++cz) {
+        for (i32 cx = cells->x0; cx <= cells->x1; ++cx) {
             for (const UnitRef& unit : unit_cells_[cell_index(cx, cz)])
                 if (!unit.entity->destroyed() && within(*unit.entity)) found.push_back(unit);
         }
@@ -271,17 +306,16 @@ void EntityRegistry::visit_units_in_radius_impl(f32 x, f32 z, f32 radius,
         const f32 dz = e.position().z - z;
         return dx * dx + dz * dz <= r2;
     };
-    if (!grid_initialized_) {
+    const auto cells =
+        grid_initialized_ ? radius_cells(x, z, r2, grid_width_, grid_height_) : std::nullopt;
+    if (!cells) {
         for_each_unit([&](Entity& e) {
             if (!e.destroyed() && within(e)) visit(e, ctx);
         });
         return;
     }
-    i32 cx_min, cz_min, cx_max, cz_max;
-    world_to_cell(x - radius, z - radius, cx_min, cz_min);
-    world_to_cell(x + radius, z + radius, cx_max, cz_max);
-    for (i32 cz = cz_min; cz <= cz_max; ++cz)
-        for (i32 cx = cx_min; cx <= cx_max; ++cx)
+    for (i32 cz = cells->z0; cz <= cells->z1; ++cz)
+        for (i32 cx = cells->x0; cx <= cells->x1; ++cx)
             for (const UnitRef& unit : unit_cells_[cell_index(cx, cz)])
                 if (!unit.entity->destroyed() && within(*unit.entity)) visit(*unit.entity, ctx);
 }
