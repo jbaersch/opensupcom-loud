@@ -732,9 +732,11 @@ public:
     static constexpr u32 LUA_GC_PERIOD_TICKS = 70;
     /// A collection marks at once and sweeps its objects a slice a tick
     /// after it (M224g: lua_sweepstep): this much work, a live object 1 and a
-    /// freed one 8. So its pause is the mark alone, and no tick frees more
-    /// than 10,000 objects.
-    static constexpr int LUA_SWEEP_SLICE = 80'000;
+    /// freed one 8. Mass losses need enough sweep work between collections:
+    /// any unfinished sweep is drained synchronously at the next collection.
+    /// This bounds work per slice, not its wall time; weak-table clearing
+    /// and finalizers still run only on the collection's scheduled tick.
+    static constexpr int LUA_SWEEP_SLICE = 320'000;
 
     /// Global sim generation — incremented each time a SimState is constructed.
     /// Used by entity handle safety to detect stale references across reloads.

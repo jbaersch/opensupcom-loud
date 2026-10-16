@@ -28,6 +28,7 @@ add_executable(osc_tests
     test_bench.cpp
     test_render_bench.cpp
     test_lua_gc.cpp
+    test_lua_gc_budget_contract.cpp
     test_script_hooks.cpp
     test_lua_bytes.cpp
     test_game_mods.cpp
