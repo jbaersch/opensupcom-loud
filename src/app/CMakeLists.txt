@@ -32,5 +32,5 @@ target_include_directories(osc_app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(osc_app
     PUBLIC osc::platform osc::core osc::vfs osc::sim osc::map osc::audio osc::video osc::ui
            osc::renderer osc::lua osc::lua_user osc::blueprints
-    PRIVATE osc::warnings unofficial::minizip::minizip
+    PRIVATE osc::warnings unofficial::minizip::minizip glfw
 )

@@ -85,7 +85,7 @@ add_executable(osc_integration
 )
 target_include_directories(osc_integration PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/runner ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(osc_integration PRIVATE osc::warnings osc::app)
+target_link_libraries(osc_integration PRIVATE osc::warnings osc::app glfw)
 # Beside opensupcom (on Windows with the same DLLs, which the cross-OS
 # check's artifact carries); crash backtraces show function names.
 set_target_properties(osc_integration PROPERTIES
