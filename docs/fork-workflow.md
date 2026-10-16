@@ -15,6 +15,8 @@ upstream features as part of the LOUD acceptance.
 - `upstream`: the original repository, used for fetching and comparison.
 - `main`: upstream's line, kept separate from the LOUD integration branch.
 - `codex/<topic>`: focused fixes or experiments based on `codex/loud`.
+- `codex/upstream-<topic>`: one upstream contribution based on `upstream/main`,
+  developed in its own worktree. It must not inherit the LOUD integration stack.
 
 ```sh
 git fetch origin
@@ -27,6 +29,20 @@ git switch -c codex/short-topic
 Use worktrees for concurrent checkouts. Inspect upstream changes and merge them
 on a dedicated integration branch with their own checks; do not replace a tested
 development build during acceptance. A fetch does not adopt new engine behavior.
+
+For a small contribution to the original project:
+
+```sh
+git fetch upstream
+git worktree add .worktrees/upstream-short-topic \
+  -b codex/upstream-short-topic upstream/main
+# Apply only the selected fix and its tests in that worktree.
+```
+
+Before publishing, review `upstream/main..HEAD`, check for newer competing PRs,
+and validate the candidate on that base. A clean cherry-pick is not a passed test.
+Inherited CI failures must be identified separately; never loosen a gate or copy
+an already-open fix into an unrelated contribution just to make it green.
 
 ## Commit and validate
 
@@ -71,6 +87,10 @@ commit; a queued run is not a passed gate.
 Upstream PRs and maintainer messages are separate actions. A public fork makes
 the changes available for inspection without granting maintainers write access
 or automatically sending a contribution proposal.
+
+The [collaboration guide](collaboration.md) defines the small contribution queue,
+test handoffs and AI provenance notes. Use the PR template to keep each proposal
+reviewable without requiring access to a private chat or local evidence files.
 
 ## Content boundary
 

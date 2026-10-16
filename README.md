@@ -122,6 +122,8 @@ Work on small `codex/<topic>` branches, keep one logical change per commit and
 record the relevant tests. Follow the [fork workflow](docs/fork-workflow.md),
 [contribution guide](CONTRIBUTING.md) and
 [provenance policy](docs/provenance-and-compatibility.md).
+Use the [collaboration guide](docs/collaboration.md) for the issue queue,
+small upstream proposals and concise handoffs for people and AI assistants.
 
 The aim is to make useful, reviewable fixes available to upstream. Engine
 compatibility reports should include the exact build and mod setup; keep game

@@ -10,6 +10,7 @@ requirements and build/run examples.
 | Check the reasoning and behavioral sources | [LOUD implementation contract](plans/2026-10-16-loud-fork-contract.md) |
 | See exactly what was tested before publication | [Export validation record](loud-publication-checks.md) |
 | Develop, validate, commit and push changes | [Fork workflow](fork-workflow.md) and [contribution guide](../CONTRIBUTING.md) |
+| Coordinate small contributions and agent handoffs | [Collaboration guide](collaboration.md) |
 | Understand source/data boundaries | [Provenance and compatibility policy](provenance-and-compatibility.md) |
 | Explore the broader engine | [Current state](current-state.md), [roadmap](ROADMAP.md) and [API gaps](engine-api-gaps.md) |
 

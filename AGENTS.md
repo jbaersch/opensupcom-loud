@@ -8,8 +8,10 @@ ignored and must never enter a public commit.
 
 - `origin` is `https://github.com/jbaersch/opensupcom-loud.git`, the public fork.
   `upstream` is `https://github.com/bwiemz/supcom-engine.git`; never push upstream.
-- Work on `codex/loud` or a focused `codex/<topic>` branch from it. Keep upstream's
-  `main` separate; inspect updates before an explicit integration and validation.
+- Fork work starts on `codex/loud` or a focused `codex/<topic>` branch from it.
+  Upstream PR candidates start on `upstream/main` in separate
+  `codex/upstream-<topic>` worktrees; never offer the whole LOUD branch as a fix.
+  Keep upstream's `main` separate; inspect updates before integration and validation.
 - Make one logical change per commit, include the reason and relevant tests,
   and stage specific files. Do not rewrite published history or force-push.
 - Complete the applicable checks before a normal fast-forward push to this fork.
@@ -24,3 +26,7 @@ ignored and must never enter a public commit.
 - Private notes, assets, captures, logs and runtime state do not belong in Git.
 - Run the applicable checks in `CONTRIBUTING.md`; distinguish Linux local results
   from Windows, cross-OS, full-mod and multiplayer acceptance.
+- Read `docs/collaboration.md` for the contribution queue and compact handoffs.
+  Record exact base/head, problem, behavioral sources, validation and limits.
+  Name AI tools/models only when verified; mark unknown historical metadata as
+  unknown. Model names are provenance, not evidence that a change is correct.

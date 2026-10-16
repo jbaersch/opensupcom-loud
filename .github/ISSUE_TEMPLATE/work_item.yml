@@ -1,0 +1,27 @@
+name: Fork work item
+description: A small engine contribution, LOUD integration task or playtest.
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Problem and expected behavior
+      description: Describe the visible result this task should achieve.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Current build and related work
+      description: Exact commit/mod setup and relevant existing issue or PR.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance and next action
+      description: Concrete regression/playtest, remaining uncertainty and next step.
+    validations:
+      required: true
+  - type: textarea
+    id: provenance
+    attributes:
+      label: Sources and AI assistance
+      description: Behavioral sources and tool/model if known; no game data or private prompts.
