@@ -1,5 +1,9 @@
 # Contributing to OpenSupCom
 
+For this LOUD fork, use `codex/loud` as the base for focused `codex/<topic>`
+branches. The [fork workflow](docs/fork-workflow.md) specifies remotes and normal
+pushes; the technical, testing and provenance rules below still apply.
+
 OpenSupCom reimplements Moho, the engine of *Supreme Commander: Forged Alliance*, and runs the game's own Lua on it. This guide covers how changes are made, checked and reviewed. For building and running, see the [README](README.md). For where the project is heading, see [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/current-state.md](docs/current-state.md). Questions, and ideas to talk over before writing code, go in [Discussions](https://github.com/bwiemz/supcom-engine/discussions).
 
 ## The ground rules
