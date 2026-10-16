@@ -239,14 +239,17 @@ void App::Window::advance_sim(double dt) {
                 }
             }
         } else {
-            // At most 8 ticks per frame; a slower-than-real-time
-            // sim slows the game rather than stalling every frame.
+            // At most 8 ticks per frame. A live solo session also yields
+            // after a soft 16 ms of completed simulation work, so expensive
+            // catch-up ticks cannot starve input and rendering in a burst.
+            // A single slow tick remains indivisible. Like the count cap,
+            // overload drops excess wall time, not native ticks/commands.
             const int ticks = osc::session_ticks(sim_accumulator, world_interp.one_tick_next,
                                                  dt * game_state_mgr.speed(),
                                                  osc::sim::SimState::SECONDS_PER_TICK, 8);
-            for (int t = 0; t < ticks; ++t) {
+            const auto advance_tick = [&] {
                 // A replay plays to its end, then holds there.
-                if (active_playback && active_playback->finished(*sim_state)) break;
+                if (active_playback && active_playback->finished(*sim_state)) return false;
                 sim_state->tick();
                 if (active_playback) {
                     const bool diverged = active_playback->diverged_at() != 0;
@@ -255,6 +258,19 @@ void App::Window::advance_sim(double dt) {
                                      active_playback->diverged_at());
                     }
                 }
+                return true;
+            };
+            if (fixed_step()) {
+                // Captures and scripted tests keep their deterministic
+                // clock and tick grouping, independent of machine speed.
+                for (int t = 0; t < ticks; ++t)
+                    if (!advance_tick()) break;
+            } else {
+                const auto began = std::chrono::steady_clock::now();
+                osc::run_budgeted_ticks(ticks, 0.016, advance_tick, [&] {
+                    return std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
+                        .count();
+                });
             }
         }
     }
