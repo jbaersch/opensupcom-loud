@@ -2,6 +2,8 @@
 #include "map/pathfinding_grid.hpp"
 
 #include <algorithm>
+#include <bit>
+#include <cstddef>
 #include <cmath>
 #include <cfloat>
 #include <functional>
@@ -160,6 +162,36 @@ Pathfinder::GridPath Pathfinder::astar(u32 sx, u32 sz, u32 gx, u32 gz, const std
 
     auto idx = [w](u32 x, u32 z) -> u32 { return z * w + x; };
 
+    const PathfindingGrid::MoveClass mover = PathfindingGrid::classify(layer, draft, amphibious);
+    if (cached_grid_version_ != grid_.version()) {
+        path_cache_.clear();
+        cached_grid_version_ = grid_.version();
+    }
+    const CachedPathKey key{sx,
+                            sz,
+                            gx,
+                            gz,
+                            static_cast<u8>(mover.kind),
+                            mover.kind == PathfindingGrid::MoveClass::Kind::Water
+                                ? std::bit_cast<u32>(mover.draft)
+                                : 0u,
+                            closed_in};
+    for (size_t i = path_cache_.size(); i != 0; --i) {
+        const auto& entry = path_cache_[i - 1];
+        if (!(entry.key == key)) continue;
+        last_nodes_explored_ = entry.nodes_explored;
+        GridPath result = entry.path;
+        std::rotate(path_cache_.begin() + static_cast<std::ptrdiff_t>(i - 1),
+                    path_cache_.begin() + static_cast<std::ptrdiff_t>(i), path_cache_.end());
+        return result;
+    }
+    const auto remember = [&](const GridPath& path, u32 nodes) {
+        // Large routes remain uncached so retained scratch memory stays bounded.
+        if (path.cells.size() > MAX_CACHED_PATH_CELLS) return;
+        if (path_cache_.size() == MAX_CACHED_PATHS) path_cache_.erase(path_cache_.begin());
+        path_cache_.push_back({key, path, nodes});
+    };
+
     // A new stamp, instead of clearing the buffers (see seen_stamp_).
     if (seen_stamp_.size() != total) {
         g_cost_buf_.assign(total, FLT_MAX);
@@ -181,7 +213,6 @@ Pathfinder::GridPath Pathfinder::astar(u32 sx, u32 sz, u32 gx, u32 gz, const std
         seen_stamp_[i] = stamp;
     };
     auto closed = [&](u32 i) { return closed_stamp_[i] == stamp; };
-    const PathfindingGrid::MoveClass mover = PathfindingGrid::classify(layer, draft, amphibious);
 
     // Priority queue: (f_cost, node_index)
     using PQEntry = std::pair<f32, u32>;
@@ -327,7 +358,10 @@ Pathfinder::GridPath Pathfinder::astar(u32 sx, u32 sz, u32 gx, u32 gz, const std
     GridPath result;
     result.reached_goal = g_cost(goal_idx) != FLT_MAX;
     const u32 end_idx = result.reached_goal ? goal_idx : best_idx;
-    if (end_idx == start_idx) return result; // nowhere to go
+    if (end_idx == start_idx) { // nowhere to go
+        remember(result, nodes_explored);
+        return result;
+    }
 
     u32 cur = end_idx;
     while (cur != UINT32_MAX) {
@@ -335,6 +369,7 @@ Pathfinder::GridPath Pathfinder::astar(u32 sx, u32 sz, u32 gx, u32 gz, const std
         cur = parent_buf_[cur];
     }
     std::reverse(result.cells.begin(), result.cells.end());
+    remember(result, nodes_explored);
     return result;
 }
 

@@ -44,6 +44,7 @@ add_executable(osc_tests
     test_image.cpp
     test_navigation_throttle.cpp
     test_dynamic_navigation.cpp
+    test_path_cache.cpp
     test_direct_path.cpp
     test_path_smoothing.cpp
     test_build_placement.cpp

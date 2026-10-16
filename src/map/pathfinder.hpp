@@ -50,7 +50,8 @@ public:
     void reset_request_count() const { requests_this_tick_ = 0; }
     int requests_this_tick() const { return requests_this_tick_; }
     static constexpr int MAX_REQUESTS_PER_TICK = 8;
-    /// Cells the last search expanded (its cost, for tests and profiling).
+    /// Original expansion count for the last search result. Reusing a cached
+    /// route retains that result's original effort; no cells are re-expanded.
     u32 last_nodes_explored() const { return last_nodes_explored_; }
 
     /// Can a unit on `layer` get from start to goal at all? Answered from
@@ -107,6 +108,27 @@ private:
         std::vector<std::pair<u32, u32>> cells; ///< start -> end, inclusive
         bool reached_goal = false;
     };
+
+    /// Exact raw-search inputs for one immutable grid version. Precise world
+    /// endpoints and path smoothing remain outside this derived cache.
+    struct CachedPathKey {
+        u32 sx, sz, gx, gz;
+        u8 mover_kind;
+        u32 draft_bits; ///< exact effective Water draft; zero for other classes
+        bool closed_in;
+        bool operator==(const CachedPathKey&) const = default;
+    };
+    struct CachedGridPath {
+        CachedPathKey key;
+        GridPath path;
+        u32 nodes_explored;
+    };
+    static constexpr size_t MAX_CACHED_PATHS = 128;
+    static constexpr size_t MAX_CACHED_PATH_CELLS = 4096;
+    /// Pure derived results, local to this Pathfinder and never serialized.
+    /// Least -> most recently used; at most 4 MiB of coordinate payload.
+    mutable std::vector<CachedGridPath> path_cache_;
+    mutable u64 cached_grid_version_ = 0;
 
     /// Raw A* on the grid. If the goal is unreachable (or the search limit
     /// is hit) the path leads to the explored cell closest to the goal

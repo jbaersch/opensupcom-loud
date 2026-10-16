@@ -11,6 +11,7 @@
 #include "sim/state_io.hpp"
 #include "sim/unit.hpp"
 
+#include <bit>
 #include <memory>
 #include <cmath>
 #include <vector>
@@ -349,4 +350,92 @@ TEST_CASE("A move saved while a new obstacle refuses its step resumes without st
     CHECK(restored->position().x == mover.position().x);
     CHECK(mover.command_queue().empty());
     CHECK(restored->command_queue().empty());
+}
+
+TEST_CASE("Warm raw route scratch is absent from snapshots and cold restore continues identically",
+          "[nav][dynamic-navigation][cache][save]") {
+    DynamicWorld a;
+    auto& mover = a.mover();
+    const auto mover_id = mover.entity_id();
+    a.structure(65, 65, 8, 24);
+    const osc::sim::Vector3 goal{111.25f, 10, 65.75f};
+    const auto* warm = a.sim.pathfinder();
+    warm->reset_request_count();
+    std::vector<osc::u8> cold_saved;
+    lua_settop(a.lua.raw(), 0);
+    const auto cold_save_error = osc::sim::save_snapshot(a.sim, cold_saved);
+    INFO(cold_save_error);
+    REQUIRE(cold_save_error.empty());
+    const auto checksum_before = a.sim.compute_sync_checksum();
+
+    const auto first =
+        warm->find_path(mover.position().x, mover.position().z, goal.x, goal.z, "Land");
+    REQUIRE(first.found);
+    REQUIRE_FALSE(first.partial);
+    const auto original_effort = warm->last_nodes_explored();
+    REQUIRE(original_effort > 0);
+    warm->reset_request_count();
+    const auto repeated =
+        warm->find_path(mover.position().x, mover.position().z, goal.x, goal.z, "Land");
+    REQUIRE(repeated.found);
+    REQUIRE(warm->last_nodes_explored() == original_effort);
+    warm->reset_request_count();
+    CHECK(a.sim.compute_sync_checksum() == checksum_before);
+    std::vector<osc::u8> warm_saved;
+    lua_settop(a.lua.raw(), 0);
+    const auto warm_save_error = osc::sim::save_snapshot(a.sim, warm_saved);
+    INFO(warm_save_error);
+    REQUIRE(warm_save_error.empty());
+    CHECK(warm_saved == cold_saved);
+
+    DynamicWorld b;
+    lua_settop(b.lua.raw(), 0);
+    const auto load_error = osc::sim::load_snapshot(b.sim, warm_saved);
+    INFO(load_error);
+    REQUIRE(load_error.empty());
+    auto* restored = static_cast<osc::sim::Unit*>(b.sim.entity_registry().find(mover_id));
+    REQUIRE(restored);
+    const auto* cold = b.sim.pathfinder();
+    REQUIRE(cold);
+    REQUIRE(cold->last_nodes_explored() == 0);
+    warm->reset_request_count();
+    cold->reset_request_count();
+    for (int repeat = 0; repeat < 3; ++repeat) {
+        const auto warm_result =
+            warm->find_path(mover.position().x, mover.position().z, goal.x, goal.z, "Land");
+        const auto cold_result =
+            cold->find_path(restored->position().x, restored->position().z, goal.x, goal.z, "Land");
+        REQUIRE(warm_result.found == cold_result.found);
+        REQUIRE(warm_result.partial == cold_result.partial);
+        REQUIRE(warm_result.throttled == cold_result.throttled);
+        REQUIRE(warm_result.waypoints.size() == cold_result.waypoints.size());
+        for (size_t i = 0; i < warm_result.waypoints.size(); ++i) {
+            CHECK(std::bit_cast<osc::u32>(warm_result.waypoints[i].x) ==
+                  std::bit_cast<osc::u32>(cold_result.waypoints[i].x));
+            CHECK(std::bit_cast<osc::u32>(warm_result.waypoints[i].y) ==
+                  std::bit_cast<osc::u32>(cold_result.waypoints[i].y));
+            CHECK(std::bit_cast<osc::u32>(warm_result.waypoints[i].z) ==
+                  std::bit_cast<osc::u32>(cold_result.waypoints[i].z));
+        }
+        CHECK(warm->last_nodes_explored() == original_effort);
+        CHECK(cold->last_nodes_explored() == original_effort);
+        CHECK(warm->requests_this_tick() == repeat + 1);
+        CHECK(cold->requests_this_tick() == repeat + 1);
+    }
+    // No obstacle or terrain changes intervene: the warm instance and the
+    // restored instance must agree while continuing from the same game state.
+    for (auto* unit : {&mover, restored}) {
+        osc::sim::UnitCommand move;
+        move.type = osc::sim::CommandType::Move;
+        move.target_pos = goal;
+        unit->push_command(move, true);
+    }
+    for (int tick = 0; tick < 60; ++tick) {
+        a.sim.tick();
+        b.sim.tick();
+        REQUIRE(a.sim.compute_sync_checksum() == b.sim.compute_sync_checksum());
+    }
+    CHECK(mover.position().x > 17);
+    CHECK(restored->position().x == mover.position().x);
+    CHECK(restored->position().z == mover.position().z);
 }
