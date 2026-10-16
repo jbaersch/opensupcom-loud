@@ -929,9 +929,9 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
     // Only extend avoidance to that circling mode: a winged guard approach
     // must still reach its hold point. Use this tick's flight, not a cached
     // display speed; resting also clears the horizontal velocity.
-    const bool circling_target =
-        circles(*this) && !command_queue_.empty() &&
-        command_queue_.front().type == CommandType::Attack && command_queue_.front().engaged;
+    const bool circling_target = circles(*this) && !command_queue_.empty() &&
+                                 command_queue_.front().type == CommandType::Attack &&
+                                 command_queue_.front().engaged;
     const bool flew_circling =
         air_stepped_ && (circling_target || circles_its_work()) &&
         (air_velocity_.x * air_velocity_.x + air_velocity_.z * air_velocity_.z > 0.0f);
@@ -1900,8 +1900,7 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
         const Vector3 at = target->position();
         aim_builder_arms(&at, L);
     }
-    if (destroyed() || !in_registry() || !current() || repair_target_id_ != target_id)
-        return false;
+    if (destroyed() || !in_registry() || !current() || repair_target_id_ != target_id) return false;
     target = registry.find(target_id);
     if (!target || target->destroyed()) return false;
 
@@ -2013,8 +2012,8 @@ void Unit::stop_repairing(lua_State* L, EntityRegistry& registry) {
         call_build_callback(L, "OnStopBuild", registry.find(target_id), "Repair");
         // A source OnStopBuild can begin new work. Retiring the old repair
         // must not erase that new task's inherited/script work item.
-        if (!destroyed() && repair_target_id_ == 0 && build_target_id_ == 0 &&
-            !enhancing_ && !is_capturing())
+        if (!destroyed() && repair_target_id_ == 0 && build_target_id_ == 0 && !enhancing_ &&
+            !is_capturing())
             call_lua_method(L, "ClearWork");
     }
 }

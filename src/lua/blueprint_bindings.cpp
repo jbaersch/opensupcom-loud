@@ -164,11 +164,8 @@ static int l_RegisterUnitBlueprint(lua_State* L) {
     lua_pop(L, 1);
     const int physics = push_section(L, 1, "Physics");
     static constexpr std::pair<const char*, lua_Number> kPhysicsDefaults[] = {
-        {"MaxSpeed", 0},
-        {"MaxAcceleration", 0},
-        {"MaxBrake", 0},
-        {"TurnRate", 0},
-        {"FuelUseTime", 0},
+        {"MaxSpeed", 0}, {"MaxAcceleration", 0}, {"MaxBrake", 0},
+        {"TurnRate", 0}, {"FuelUseTime", 0},
     };
     default_numbers(L, physics, kPhysicsDefaults);
     for (const char* field : {"MotionType", "AltMotionType"}) {

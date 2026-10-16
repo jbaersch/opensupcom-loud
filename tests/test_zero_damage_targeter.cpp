@@ -70,7 +70,8 @@ TEST_CASE("A scripted zero damage targeter acquires and aims without causing dam
             CanWeaponFire = function(self) return true end,
             OnFire = function(self) FireEvents = FireEvents + 1 end,
         }
-    )").ok());
+    )")
+                .ok());
     weapon->lua_table_ref = luaL_ref(lua.raw(), LUA_REGISTRYINDEX);
     auto* designator = weapon.get();
     owner->add_weapon(std::move(weapon));
@@ -96,8 +97,8 @@ TEST_CASE("A scripted zero damage targeter acquires and aims without causing dam
     CHECK(designator->target_entity_id == target_id);
     CHECK(aim->has_target());
     CHECK(aim->on_target());
-    CHECK(lua.do_string("assert(TargetEvents == 1 and TrackingEvents == 1 and FireEvents > 0)")
-              .ok());
+    CHECK(
+        lua.do_string("assert(TargetEvents == 1 and TrackingEvents == 1 and FireEvents > 0)").ok());
     // Other weapons mounted on this turret use this same posed barrel and
     // muzzle. The designator must turn it even though it deals no damage.
     CHECK(observer->bone_world_forward(2).x > 0.95f);
@@ -164,7 +165,8 @@ TEST_CASE("A narrow weapon aims relative to another controller on its shared tur
         REQUIRE(lua.do_string(R"(
             return {CanWeaponFire = function(self) return true end,
                     OnFire = function(self) self.Fired = (self.Fired or 0) + 1 end}
-        )").ok());
+        )")
+                    .ok());
         weapon->lua_table_ref = luaL_ref(lua.raw(), LUA_REGISTRYINDEX);
         weapons[index] = weapon.get();
         owner->add_weapon(std::move(weapon));
@@ -266,7 +268,9 @@ TEST_CASE("Firing tolerance uses the desired angle beyond the mechanical arc",
     unit.add_manipulator(std::move(controller));
     bool pitch_axis = false;
     SECTION("yaw") {}
-    SECTION("pitch") { pitch_axis = true; }
+    SECTION("pitch") {
+        pitch_axis = true;
+    }
     constexpr float radians = 0.01745329252f;
     for (const float sign : {-1.0f, 1.0f}) {
         INFO("direction " << sign << " pitch axis " << pitch_axis);

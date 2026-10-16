@@ -137,8 +137,8 @@ static bool is_builder_deepcopy_diagnostic(const std::string& message) {
 /// report an assertion failure.
 static bool contains_lua_failure_token(std::string_view message) {
     const auto word_character = [](char c) {
-        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-               (c >= '0' && c <= '9') || c == '_';
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+               c == '_';
     };
     size_t at = 0;
     while (at < message.size()) {

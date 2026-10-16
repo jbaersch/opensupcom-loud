@@ -288,20 +288,19 @@ TEST_CASE("LOUD uppercase threat names query their actual influence lanes",
     map.report(1, 1, {40, 0, 40}, plane);
     map.report(2, 1, {40, 0, 40}, land);
     map.report(3, 1, {40, 0, 40}, sea);
-    map.update([](i32 army) { return army == 0; }, [](u32 id) {
-        return std::optional<InfluenceMap::UnitState>(
-            {id == 3 ? ThreatLayer::Naval : ThreatLayer::Land, true});
-    });
+    map.update([](i32 army) { return army == 0; },
+               [](u32 id) {
+                   return std::optional<InfluenceMap::UnitState>(
+                       {id == 3 ? ThreatLayer::Naval : ThreatLayer::Land, true});
+               });
     struct Query {
         const char* name;
         ThreatType type;
         f32 value;
     };
     const Query queries[] = {
-        {"AIR", ThreatType::Air, 12},
-        {"LAND", ThreatType::Land, 11},
-        {"NAVAL", ThreatType::Naval, 17},
-        {"ANTIAIR", ThreatType::AntiAir, 3},
+        {"AIR", ThreatType::Air, 12},        {"LAND", ThreatType::Land, 11},
+        {"NAVAL", ThreatType::Naval, 17},    {"ANTIAIR", ThreatType::AntiAir, 3},
         {"ECONOMY", ThreatType::Economy, 5},
     };
     for (const auto& query : queries) {

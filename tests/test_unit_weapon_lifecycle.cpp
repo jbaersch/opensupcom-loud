@@ -33,7 +33,8 @@ TEST_CASE("Unit creation initializes source state before weapon callbacks",
             Weapon = {{Label = 'Marker', MaxRadius = 20, Damage = 1, RateOfFire = 1,
                 FireTargetLayerCapsTable = {Land = 'Land|Water|Seabed'}}},
         }
-    )").ok());
+    )")
+                .ok());
     store.register_blueprint(lua.raw(), osc::blueprints::BlueprintType::Unit,
                              lua_gettop(lua.raw()));
     lua_pop(lua.raw(), 1);
@@ -87,20 +88,22 @@ TEST_CASE("Unit creation initializes source state before weapon callbacks",
         __unit_class.__index = function(self, key)
             return __unit_class[key] or moho.unit_methods[key]
         end
-    )").ok());
+    )")
+                .ok());
 
     bool complete = false;
     SECTION("a complete CreateUnitHPR finishes after weapon initialization") {
         complete = true;
-        REQUIRE(lua.do_string("created = CreateUnitHPR('lifecycle_unit', 1, 20, 0, 20, 0, 0, 0)")
-                    .ok());
+        REQUIRE(
+            lua.do_string("created = CreateUnitHPR('lifecycle_unit', 1, 20, 0, 20, 0, 0, 0)").ok());
     }
     SECTION("a newly constructed unit initializes weapons without finishing construction") {
         lua_pushstring(lua.raw(), "__osc_create_building_unit");
         lua_rawget(lua.raw(), LUA_REGISTRYINDEX);
         lua_setglobal(lua.raw(), "CreateBuilding");
         REQUIRE(lua.do_string("createdId, created = CreateBuilding('lifecycle_unit', 1, "
-                              "20, 0, 20)").ok());
+                              "20, 0, 20)")
+                    .ok());
     }
     CHECK(lua.do_string(R"(
         assert(PreCreates == 1 and UnitCreates == 1 and WeaponCreates == 1)
@@ -108,19 +111,21 @@ TEST_CASE("Unit creation initializes source state before weapon callbacks",
         assert(RecursiveWrapperStable, 'recursive access created another wrapper')
         assert(created.EarlyWeapon == created:GetWeapon(1), 'wrapper identity changed')
         assert(created:GetWeapon(1).Initialized)
-    )").ok());
+    )")
+              .ok());
     if (complete) {
         CHECK(lua.do_string("assert(table.concat(Events, ',') == 'pre,unit,weapon,stop'); "
-                            "assert(Stops == 1 and StopSawInitializedWeapon)").ok());
+                            "assert(Stops == 1 and StopSawInitializedWeapon)")
+                  .ok());
     } else {
         CHECK(lua.do_string("assert(table.concat(Events, ',') == 'pre,unit,weapon'); "
-                            "assert(Stops == 0)").ok());
+                            "assert(Stops == 0)")
+                  .ok());
     }
     REQUIRE(sim.entity_registry().count() == 1);
     osc::sim::Unit* created = nullptr;
-    sim.entity_registry().for_each_unit([&](osc::sim::Entity& entity) {
-        created = static_cast<osc::sim::Unit*>(&entity);
-    });
+    sim.entity_registry().for_each_unit(
+        [&](osc::sim::Entity& entity) { created = static_cast<osc::sim::Unit*>(&entity); });
     REQUIRE(created);
     REQUIRE(created->weapon_count() == 1);
     CHECK(created->get_weapon(0)->fire_target_layer_caps ==

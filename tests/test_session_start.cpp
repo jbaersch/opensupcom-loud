@@ -110,7 +110,8 @@ TEST_CASE("Session starts use the scenario loaded by the scripts", "[session][sc
         function BeginSession() end
         function OnCreateArmyBrain() end
         SavedScenario = saved
-    )").ok());
+    )")
+                .ok());
 
     SECTION("a global scenario remains supported") {
         REQUIRE(lua.do_string("Scenario = SavedScenario").ok());
@@ -122,7 +123,8 @@ TEST_CASE("Session starts use the scenario loaded by the scripts", "[session][sc
             setmetatable(_G, {__index = function(_, key)
                 if key == 'Scenario' then ScenarioLookup = true end
             end})
-        )").ok());
+        )")
+                    .ok());
     }
     REQUIRE(manager.start_session(lua, osc::vfs::VirtualFileSystem{}, sim, meta).ok());
     CHECK(sim.get_army(0)->start_position().x == 120.0f);
@@ -148,7 +150,8 @@ TEST_CASE("ArmyPool is initialized without an AI plan", "[session][armypool]") {
             PoolCreated = true
             PoolHasPlan = plan ~= nil and plan ~= 'none'
         end}}
-    )").ok());
+    )")
+                .ok());
     lua_pushstring(lua.raw(), "__platoon_class");
     lua_getglobal(lua.raw(), "PoolClass");
     lua_rawset(lua.raw(), LUA_REGISTRYINDEX);

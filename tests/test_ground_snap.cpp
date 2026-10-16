@@ -250,8 +250,8 @@ TEST_CASE("A stationary hover keeps a finite unit orientation through repeated g
     q.w = std::nextafter(q.w, 2.0f); // ordinary one-ULP positive norm error
     hover->set_orientation(q);
     const auto norm_squared = [](const osc::sim::Quaternion& value) {
-        return double{value.x} * value.x + double{value.y} * value.y +
-               double{value.z} * value.z + double{value.w} * value.w;
+        return double{value.x} * value.x + double{value.y} * value.y + double{value.z} * value.z +
+               double{value.w} * value.w;
     };
     REQUIRE(norm_squared(q) > 1.0);
     REQUIRE(norm_squared(q) == Approx(1.0).margin(1e-6));
@@ -265,8 +265,8 @@ TEST_CASE("A stationary hover keeps a finite unit orientation through repeated g
         const auto& facing = hover->orientation();
         INFO("hover tick " << tick);
         REQUIRE((std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z) &&
-                 std::isfinite(facing.x) && std::isfinite(facing.y) &&
-                 std::isfinite(facing.z) && std::isfinite(facing.w)));
+                 std::isfinite(facing.x) && std::isfinite(facing.y) && std::isfinite(facing.z) &&
+                 std::isfinite(facing.w)));
         largest_norm_error = std::max(largest_norm_error, std::abs(norm_squared(facing) - 1.0));
     }
     CHECK(largest_norm_error < 1e-5);
@@ -300,9 +300,8 @@ TEST_CASE("A hover crossing opposite slopes keeps its pose finite at different h
             REQUIRE((std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z) &&
                      std::isfinite(facing.x) && std::isfinite(facing.y) &&
                      std::isfinite(facing.z) && std::isfinite(facing.w)));
-            const double norm_squared =
-                double{facing.x} * facing.x + double{facing.y} * facing.y +
-                double{facing.z} * facing.z + double{facing.w} * facing.w;
+            const double norm_squared = double{facing.x} * facing.x + double{facing.y} * facing.y +
+                                        double{facing.z} * facing.z + double{facing.w} * facing.w;
             largest_norm_error = std::max(largest_norm_error, std::abs(norm_squared - 1.0));
         }
         CHECK(largest_norm_error < 1e-5);
@@ -324,9 +323,8 @@ TEST_CASE("Native ground motion normalizes a finite orientation at its commit bo
     CHECK(hover->orientation().w == q.w);
     hover->stand_on_ground(&terrain, {20.0f, kBase, 64.0f}, hover->orientation());
     const auto& facing = hover->orientation();
-    const double norm_squared =
-        double{facing.x} * facing.x + double{facing.y} * facing.y +
-        double{facing.z} * facing.z + double{facing.w} * facing.w;
+    const double norm_squared = double{facing.x} * facing.x + double{facing.y} * facing.y +
+                                double{facing.z} * facing.z + double{facing.w} * facing.w;
     CHECK(norm_squared == Approx(1.0).margin(1e-6));
     CHECK(osc::sim::quat_yaw(facing) == Approx(0.8f).margin(1e-5));
     check_vec(hover->position(), 20.0f, kBase, 64.0f);

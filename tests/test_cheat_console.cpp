@@ -60,7 +60,8 @@ struct CheatConsole {
                     PopupOpen = not PopupOpen
                 end}
             end
-        )").ok());
+        )")
+                    .ok());
     }
 
     void pointer(const char* key, void* value) {
@@ -85,12 +86,14 @@ TEST_CASE("Alt-F2's console action opens the source dialog at the pointer", "[ch
     const int top = lua_gettop(w.lua.raw());
     REQUIRE(w.lua.do_string("ConExecute('PopupCreateUnitMenu') assert(PopupCalls == 0)").ok());
     w.cheats(true);
-    REQUIRE(w.lua.do_string(R"(
+    REQUIRE(w.lua
+                .do_string(R"(
         ConExecute('PopupCreateUnitMenu')
         assert(PopupCalls == 1 and PopupOpen and PopupX == 640 and PopupY == 360)
         ConExecute('PopupCreateUnitMenu')
         assert(PopupCalls == 2 and not PopupOpen)
-    )").ok());
+    )")
+                .ok());
     CHECK(lua_gettop(w.lua.raw()) == top);
     CHECK(w.callbacks.empty());
     REQUIRE(w.lua.do_string("ConExecute('SetFocusArmy 1') assert(GetFocusArmy() == 2)").ok());
@@ -139,7 +142,8 @@ TEST_CASE("The create dialog's saved screen point queues a complete-unit request
     CHECK(w.callbacks.empty());
 }
 
-TEST_CASE("Source cheat dialog failures keep their diagnosis and fail test modes", "[cheat][console]") {
+TEST_CASE("Source cheat dialog failures keep their diagnosis and fail test modes",
+          "[cheat][console]") {
     struct CaptureFailures {
         bool previous = osc::test_status::count_lua_failures();
         CaptureFailures() {
@@ -157,11 +161,13 @@ TEST_CASE("Source cheat dialog failures keep their diagnosis and fail test modes
         REQUIRE(w.lua.do_string("function import(path) error('source popup sentinel') end").ok());
     }
     SECTION("dialog failed") {
-        REQUIRE(w.lua.do_string(R"(
+        REQUIRE(w.lua
+                    .do_string(R"(
             function import(path)
                 return {CreateDialog = function() error('source popup sentinel') end}
             end
-        )").ok());
+        )")
+                    .ok());
     }
     const int top = lua_gettop(w.lua.raw());
     w.console.execute(w.lua.raw(), "PopupCreateUnitMenu");
@@ -175,13 +181,15 @@ TEST_CASE("Source cheat dialog failures keep their diagnosis and fail test modes
 TEST_CASE("Cheat-created footprints share the normal building grid", "[cheat][cheat-grid]") {
     CheatConsole w;
     w.cheats(true);
-    REQUIRE(w.lua.do_string(R"(
+    REQUIRE(w.lua
+                .do_string(R"(
         __blueprints.test_factory = {Footprint = {SizeX = 5, SizeZ = 5}}
-    )").ok());
+    )")
+                .ok());
     float x = 0, y = 0;
     REQUIRE(w.view.project(211.1239f, 0, 291.7166f, x, y));
-    w.console.execute(w.lua.raw(), "CreateUnit test_factory 0 " + std::to_string(x) + " " +
-                                   std::to_string(y));
+    w.console.execute(w.lua.raw(),
+                      "CreateUnit test_factory 0 " + std::to_string(x) + " " + std::to_string(y));
     auto queued = w.callbacks.drain();
     REQUIRE(queued.size() == 1);
     const auto& request = queued.front();

@@ -645,8 +645,8 @@ void AimManipulator::tick(f32 dt) {
     // then compare the actual angle with the unclamped desired angle.
     // FiringTolerance can reach just past a mechanical stop, without
     // enlarging the arc or accepting a target farther outside tolerance.
-    const f32 heading_error =
-        std::fabs(full_circle ? wrap_angle(desired_heading - heading_) : desired_heading - heading_);
+    const f32 heading_error = std::fabs(full_circle ? wrap_angle(desired_heading - heading_)
+                                                    : desired_heading - heading_);
     const f32 pitch_error =
         pitches && !yaw_only_on_target_ ? std::fabs(desired_pitch - pitch_) : 0.0f;
     on_target_ = heading_error <= tolerance_ && pitch_error <= tolerance_;

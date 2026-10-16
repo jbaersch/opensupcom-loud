@@ -58,7 +58,8 @@ struct AreaWorld {
                     BuildCostMass = 100, BuildCostEnergy = 1000},
                     OtherUpgrade = {Slot = 'Area', BuildTime = 50,
                     BuildCostMass = 200, BuildCostEnergy = 2000}}}
-        )").ok());
+        )")
+                    .ok());
         store.register_blueprint(lua.raw(), osc::blueprints::BlueprintType::Unit,
                                  lua_gettop(lua.raw()));
         lua_pop(lua.raw(), 1);
@@ -83,7 +84,8 @@ struct AreaWorld {
                 OnSiloBuildEnd = function(self) AreaSiloEnds = AreaSiloEnds + 1 end,
             }, {__index = moho.unit_methods})
             AreaClass.__index = AreaClass
-        )").ok());
+        )")
+                    .ok());
     }
 
     Unit* unit(float x, float z, int army = 0, float speed = 0) {
@@ -148,7 +150,8 @@ struct AreaWorld {
                     Economy = {BuildTime = 100, BuildCostMass = 100, BuildCostEnergy = 1000}}
                 __blueprints.other_missile = {
                     Economy = {BuildTime = 50, BuildCostMass = 200, BuildCostEnergy = 2000}}
-            )").ok());
+            )")
+                        .ok());
             if (target.weapons().empty()) {
                 auto launcher = std::make_unique<osc::sim::Weapon>();
                 launcher->counted_projectile = true;
@@ -258,9 +261,15 @@ TEST_CASE("Point assist rejects moving, airborne, enemy and out-of-box candidate
         move.target_pos = {110, kY, 60};
         ignored->push_command(move, true);
     }
-    SECTION("airborne") { ignored->set_layer("Air"); }
-    SECTION("enemy") { ignored->set_army(2); }
-    SECTION("outside the point's search box") { ignored->set_position({81, kY, 60}); }
+    SECTION("airborne") {
+        ignored->set_layer("Air");
+    }
+    SECTION("enemy") {
+        ignored->set_army(2);
+    }
+    SECTION("outside the point's search box") {
+        ignored->set_position({81, kY, 60});
+    }
     AreaWorld::guard(*worker, {60, kY, 60});
     world.tick(8);
     CHECK(worker->repair_target_id() == valid->entity_id());
@@ -286,8 +295,9 @@ TEST_CASE("Point assist follows a builder's work focus beyond the search box",
     CHECK(worker->guard_order()->target_pos.x == 60);
 }
 
-TEST_CASE("Point assist contributes to healthy active work items and preserves their owner's lifecycle",
-          "[guard][area-assist][area-work-item]") {
+TEST_CASE(
+    "Point assist contributes to healthy active work items and preserves their owner's lifecycle",
+    "[guard][area-assist][area-work-item]") {
     AreaWorld world;
     auto* worker = world.worker(56, 60);
     auto* target = world.unit(60, 60);
@@ -301,10 +311,12 @@ TEST_CASE("Point assist contributes to healthy active work items and preserves t
     }
     SECTION("silo ammunition") {
         missile = true;
-        REQUIRE(world.lua.do_string(R"(
+        REQUIRE(world.lua
+                    .do_string(R"(
             __blueprints.area_missile = {
                 Economy = {BuildTime = 100, BuildCostMass = 100, BuildCostEnergy = 1000}}
-        )").ok());
+        )")
+                    .ok());
         auto launcher = std::make_unique<osc::sim::Weapon>();
         launcher->counted_projectile = true;
         launcher->nuke_weapon = true;
@@ -339,7 +351,8 @@ TEST_CASE("Point assist contributes to healthy active work items and preserves t
     CHECK(worker->health() == worker->max_health());
 }
 
-TEST_CASE("GetFocusUnit exposes a repair target, retires it on stop and preserves construction precedence",
+TEST_CASE("GetFocusUnit exposes a repair target, retires it on stop and preserves construction "
+          "precedence",
           "[guard][area-assist][assist-focus]") {
     AreaWorld world;
     auto* worker = world.worker(56, 60);
@@ -357,13 +370,15 @@ TEST_CASE("GetFocusUnit exposes a repair target, retires it on stop and preserve
     worker->push_command(repair, true);
     world.tick(8);
     REQUIRE(worker->repair_target_id() == target->entity_id());
-    CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(AreaWorker) == AreaTarget)").ok());
+    CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(AreaWorker) == AreaTarget)")
+              .ok());
     worker->clear_commands(world.sim.entity_registry(), world.lua.raw());
     world.tick(); // clearing the queue retires its repair on the next unit update
     CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(AreaWorker) == nil)").ok());
 
     worker->set_capture_target_id(target->entity_id());
-    CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(AreaWorker) == AreaTarget)").ok());
+    CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(AreaWorker) == AreaTarget)")
+              .ok());
     worker->set_capture_target_id(0);
     target->set_is_being_built(true);
     target->set_fraction_complete(0.25f);
@@ -373,7 +388,8 @@ TEST_CASE("GetFocusUnit exposes a repair target, retires it on stop and preserve
     REQUIRE(worker->build_target_id() == target->entity_id());
     auto* captured = world.unit(65, 65, 1);
     worker->set_capture_target_id(captured->entity_id());
-    CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(AreaWorker) == AreaTarget)").ok());
+    CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(AreaWorker) == AreaTarget)")
+              .ok());
     worker->set_capture_target_id(0);
     worker->clear_commands(world.sim.entity_registry(), world.lua.raw());
     CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(AreaWorker) == nil)").ok());
@@ -410,7 +426,9 @@ TEST_CASE("Assisting work items respects helper stop, target cancellation, pause
             lua_setglobal(world.lua.raw(), "AreaOwner");
             lua_rawgeti(world.lua.raw(), LUA_REGISTRYINDEX, worker->lua_table_ref());
             lua_setglobal(world.lua.raw(), "AreaHelper");
-            CHECK(world.lua.do_string("assert(AreaOwner.WorkItem ~= nil and AreaHelper.WorkItem == nil)").ok());
+            CHECK(world.lua
+                      .do_string("assert(AreaOwner.WorkItem ~= nil and AreaHelper.WorkItem == nil)")
+                      .ok());
         }
     }
     SECTION("cancelling the owner's work releases the helper but keeps its area order") {
@@ -489,14 +507,16 @@ TEST_CASE("Enhancement assistance preserves the helper's source-computed costs",
     auto* target = world.unit(60, 60);
     lua_rawgeti(world.lua.raw(), LUA_REGISTRYINDEX, worker->lua_table_ref());
     lua_setglobal(world.lua.raw(), "CostHelper");
-    REQUIRE(world.lua.do_string(R"(
+    REQUIRE(world.lua
+                .do_string(R"(
         function CostHelper:OnStartBuild(target, order)
             assert(self.WorkItem ~= nil)
             -- This represents this helper's own source modifiers and upkeep.
             self:SetConsumptionPerSecondMass(7)
             self:SetConsumptionPerSecondEnergy(11)
         end
-    )").ok());
+    )")
+                .ok());
     world.start_work(*target, false);
     world.tick();
     REQUIRE(target->is_enhancing());
@@ -520,7 +540,8 @@ TEST_CASE("An InheritWork callback replacing the command does not start the reti
     auto* target = world.unit(60, 60);
     lua_rawgeti(world.lua.raw(), LUA_REGISTRYINDEX, worker->lua_table_ref());
     lua_setglobal(world.lua.raw(), "ReentrantHelper");
-    REQUIRE(world.lua.do_string(R"(
+    REQUIRE(world.lua
+                .do_string(R"(
         RetiredRepairStarts = 0
         function ReentrantHelper:InheritWork(target)
             self:Stop()
@@ -529,7 +550,8 @@ TEST_CASE("An InheritWork callback replacing the command does not start the reti
         function ReentrantHelper:OnStartBuild()
             RetiredRepairStarts = RetiredRepairStarts + 1
         end
-    )").ok());
+    )")
+                .ok());
     worker->add_command_cap("RULEUCC_Move");
     world.start_work(*target, false);
     AreaWorld::guard(*worker, {59, kY, 59});
@@ -551,9 +573,11 @@ TEST_CASE("GetFocusUnit exposes an active unit reclaim and clears after a stoppe
     lua_setglobal(world.lua.raw(), "ReclaimWorker");
     lua_rawgeti(world.lua.raw(), LUA_REGISTRYINDEX, target->lua_table_ref());
     lua_setglobal(world.lua.raw(), "ReclaimUnit");
-    REQUIRE(world.lua.do_string(R"(
+    REQUIRE(world.lua
+                .do_string(R"(
         function ReclaimWorker:GetReclaimCosts(target) return 100, 0, 100000 end
-    )").ok());
+    )")
+                .ok());
     UnitCommand reclaim;
     reclaim.type = CommandType::Reclaim;
     reclaim.target_id = target->entity_id();
@@ -561,15 +585,15 @@ TEST_CASE("GetFocusUnit exposes an active unit reclaim and clears after a stoppe
     worker->push_command(reclaim, true);
     for (int tick = 0; tick < 8 && !worker->is_reclaiming(); ++tick) world.tick();
     REQUIRE(worker->is_reclaiming());
-    CHECK(world.lua.do_string(
-        "assert(moho.unit_methods.GetFocusUnit(ReclaimWorker) == ReclaimUnit)").ok());
+    CHECK(
+        world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(ReclaimWorker) == ReclaimUnit)")
+            .ok());
     UnitCommand stop;
     stop.type = CommandType::Stop;
     worker->push_command(stop, true);
     world.tick();
     CHECK_FALSE(worker->is_reclaiming());
-    CHECK(world.lua.do_string(
-        "assert(moho.unit_methods.GetFocusUnit(ReclaimWorker) == nil)").ok());
+    CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(ReclaimWorker) == nil)").ok());
 }
 
 TEST_CASE("GetFocusUnit never returns a reclaimed prop even though it has a live Lua handle",
@@ -591,9 +615,11 @@ TEST_CASE("GetFocusUnit never returns a reclaimed prop even though it has a live
     target->set_lua_table_ref(luaL_ref(world.lua.raw(), LUA_REGISTRYINDEX));
     lua_rawgeti(world.lua.raw(), LUA_REGISTRYINDEX, worker->lua_table_ref());
     lua_setglobal(world.lua.raw(), "ReclaimWorker");
-    REQUIRE(world.lua.do_string(R"(
+    REQUIRE(world.lua
+                .do_string(R"(
         function ReclaimWorker:GetReclaimCosts(target) return 100, 0, 100000 end
-    )").ok());
+    )")
+                .ok());
     UnitCommand reclaim;
     reclaim.type = CommandType::Reclaim;
     reclaim.target_id = target->entity_id();
@@ -601,6 +627,5 @@ TEST_CASE("GetFocusUnit never returns a reclaimed prop even though it has a live
     worker->push_command(reclaim, true);
     for (int tick = 0; tick < 8 && !worker->is_reclaiming(); ++tick) world.tick();
     REQUIRE(worker->is_reclaiming());
-    CHECK(world.lua.do_string(
-        "assert(moho.unit_methods.GetFocusUnit(ReclaimWorker) == nil)").ok());
+    CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(ReclaimWorker) == nil)").ok());
 }

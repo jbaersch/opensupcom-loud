@@ -1425,8 +1425,9 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
         } else repair_build_time_ = target.silo_build().build_time;
         if (repair_build_time_ <= 0) return done();
         if (target.is_enhancing()) {
-            target.set_work_progress(std::min(1.0f, target.work_progress() +
-                static_cast<f32>(build_rate_ * dt / repair_build_time_) * econ_eff));
+            target.set_work_progress(std::min(
+                1.0f, target.work_progress() +
+                          static_cast<f32>(build_rate_ * dt / repair_build_time_) * econ_eff));
             if (target.lua_table_ref() >= 0) {
                 lua_rawgeti(L, LUA_REGISTRYINDEX, target.lua_table_ref());
                 lua_pushstring(L, "WorkProgress");
@@ -1715,16 +1716,16 @@ Unit* point_guard_work(Unit& worker, const UnitCommand& guard, SimContext& ctx) 
     const bool rebuilder = worker.has_category("REBUILDER");
     if (!rebuilder && !worker.has_category("REPAIR")) return nullptr;
     const f32 radius = worker.guard_scan_radius();
-    const auto candidates = ctx.registry.units_in_rect(
-        guard.target_pos.x - radius, guard.target_pos.z - radius,
-        guard.target_pos.x + radius, guard.target_pos.z + radius);
+    const auto candidates =
+        ctx.registry.units_in_rect(guard.target_pos.x - radius, guard.target_pos.z - radius,
+                                   guard.target_pos.x + radius, guard.target_pos.z + radius);
     u32 best_id = 0;
     f32 best_distance = std::numeric_limits<f32>::infinity();
     for (Entity* entity : candidates) {
         auto& candidate = static_cast<Unit&>(*entity);
         if (&candidate == &worker || candidate.destroyed() || candidate.is_dying() ||
-            candidate.is_air_unit() || candidate.velocity().x != 0 ||
-            candidate.velocity().y != 0 || candidate.velocity().z != 0)
+            candidate.is_air_unit() || candidate.velocity().x != 0 || candidate.velocity().y != 0 ||
+            candidate.velocity().z != 0)
             continue;
         const Vector3 at = candidate.position();
         if (ctx.terrain) {
@@ -1738,16 +1739,15 @@ Unit* point_guard_work(Unit& worker, const UnitCommand& guard, SimContext& ctx) 
                 x1 = ctx.sim->playable_x1();
                 z1 = ctx.sim->playable_z1();
             }
-            if (at.x < x0 + 1 || at.z < z0 + 1 || at.x > x1 - 1 || at.z > z1 - 1)
-                continue;
+            if (at.x < x0 + 1 || at.z < z0 + 1 || at.x > x1 - 1 || at.z > z1 - 1) continue;
         }
         if (rebuilder) {
             bool anchored = false;
             for (const auto& order : worker.command_queue()) {
                 if (order.type != CommandType::Guard) continue;
                 const Entity* target = ctx.registry.find(order.target_id);
-                const Vector3 point = target && !target->destroyed() ? target->position()
-                                                                   : order.target_pos;
+                const Vector3 point =
+                    target && !target->destroyed() ? target->position() : order.target_pos;
                 const f32 dx = point.x - at.x, dz = point.z - at.z;
                 if (dx * dx + dz * dz < 1e-6f) {
                     anchored = true;
@@ -1775,8 +1775,7 @@ Unit* point_guard_work(Unit& worker, const UnitCommand& guard, SimContext& ctx) 
             const bool needs_work =
                 candidate.is_being_built() || candidate.health() < candidate.max_health() ||
                 candidate.shield_needs_repair(ctx.registry, ctx.L) ||
-                (!candidate.is_paused() &&
-                 (candidate.is_enhancing() || candidate.silo_building()));
+                (!candidate.is_paused() && (candidate.is_enhancing() || candidate.silo_building()));
             if (worker.destroyed() || !worker.in_registry()) return nullptr;
             if (!needs_work || candidate.destroyed() ||
                 ctx.registry.find(candidate.entity_id()) != &candidate)
@@ -1795,8 +1794,7 @@ Unit* point_guard_work(Unit& worker, const UnitCommand& guard, SimContext& ctx) 
         }
     }
     Entity* best = ctx.registry.find(best_id);
-    return best && !best->destroyed() && best->is_unit() &&
-                   !static_cast<Unit*>(best)->is_dying()
+    return best && !best->destroyed() && best->is_unit() && !static_cast<Unit*>(best)->is_dying()
                ? static_cast<Unit*>(best)
                : nullptr;
 }

@@ -964,8 +964,8 @@ static int unit_GetWeapon(lua_State* L) {
             lua_pushvalue(L, wtable);
             if (lua_pcall(L, 1, 0, 0) != 0) {
                 const char* error = lua_tostring(L, -1);
-                const std::string diagnostic = "Weapon " + label + " OnCreate error: " +
-                                               (error ? error : "(unknown)");
+                const std::string diagnostic =
+                    "Weapon " + label + " OnCreate error: " + (error ? error : "(unknown)");
                 spdlog::warn("{}", diagnostic);
                 if (test_status::count_lua_failures()) test_status::record_failure(diagnostic);
             }

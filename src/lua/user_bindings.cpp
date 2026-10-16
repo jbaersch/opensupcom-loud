@@ -2492,8 +2492,7 @@ namespace {
 
 ui::WorldView* cheat_world_view(lua_State* L) {
     const auto* sim = get_sim(L);
-    if (!sim || !sim->cheats_enabled() || sim->playback() || sim->army_count() == 0)
-        return nullptr;
+    if (!sim || !sim->cheats_enabled() || sim->playback() || sim->army_count() == 0) return nullptr;
     lua_pushstring(L, "__osc_world_view");
     lua_rawget(L, LUA_REGISTRYINDEX);
     auto* view = static_cast<ui::WorldView*>(lua_touserdata(L, -1));
@@ -2528,7 +2527,8 @@ void popup_create_unit_menu(lua_State* L, const std::vector<std::string>&) {
     lua_pushnumber(L, y);
     if (lua_pcall(L, 2, 0, 0) != 0) {
         const char* error = lua_tostring(L, -1);
-        report_cheat_error(std::string("PopupCreateUnitMenu: ") + (error ? error : "unknown error"));
+        report_cheat_error(std::string("PopupCreateUnitMenu: ") +
+                           (error ? error : "unknown error"));
     }
     lua_settop(L, top);
 }
@@ -2565,8 +2565,11 @@ void cheat_create_unit(lua_State* L, const std::vector<std::string>& args) {
     if (view->terrain()) at.y = view->terrain()->get_surface_height(at.x, at.z);
     sim::SimCallbackEntry entry;
     entry.func_name = sim::kCheatCreateUnitCallback;
-    entry.args = {{"Blueprint", args[1]}, {"Army", army}, {"X", f64(at.x)},
-                  {"Y", f64(at.y)}, {"Z", f64(at.z)}};
+    entry.args = {{"Blueprint", args[1]},
+                  {"Army", army},
+                  {"X", f64(at.x)},
+                  {"Y", f64(at.y)},
+                  {"Z", f64(at.z)}};
     queue->push(std::move(entry));
 }
 

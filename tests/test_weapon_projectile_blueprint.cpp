@@ -44,7 +44,8 @@ struct ProjectileBlueprintWorld {
         lua_setglobal(lua.raw(), "ProjectileWeapon");
         REQUIRE(lua.do_string(R"(
             setmetatable(ProjectileWeapon, {__index = moho.weapon_methods})
-        )").ok());
+        )")
+                    .ok());
     }
 
     void check(const char* source) {
@@ -75,9 +76,11 @@ TEST_CASE("A weapon without a known projectile blueprint returns nil",
           "[weapon][projectile-blueprint]") {
     ProjectileBlueprintWorld w;
     w.weapon.projectile_bp_id = "/projectiles/missing/missing_proj.bp";
-    w.check("assert(ProjectileWeapon:GetProjectileBlueprint() == nil, 'unknown projectile was exposed')");
+    w.check("assert(ProjectileWeapon:GetProjectileBlueprint() == nil, 'unknown projectile was "
+            "exposed')");
     w.weapon.projectile_bp_id.clear();
-    w.check("assert(ProjectileWeapon:GetProjectileBlueprint() == nil, 'empty projectile was exposed')");
+    w.check(
+        "assert(ProjectileWeapon:GetProjectileBlueprint() == nil, 'empty projectile was exposed')");
 }
 
 TEST_CASE("Changing a weapon's projectile updates the next blueprint query",

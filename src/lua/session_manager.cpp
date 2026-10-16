@@ -793,11 +793,17 @@ void SessionManager::extract_start_positions(lua_State* L,
         lua_pop(L, 1);
         lua_pushstring(L, "ScenarioInfo");
         lua_rawget(L, LUA_GLOBALSINDEX);
-        if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            return;
+        }
         lua_pushstring(L, "Env");
         lua_rawget(L, -2);
         lua_remove(L, -2);
-        if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            return;
+        }
         lua_pushstring(L, "Scenario");
         lua_rawget(L, -2);
         lua_remove(L, -2);

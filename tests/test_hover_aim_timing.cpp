@@ -48,7 +48,9 @@ TEST_CASE("A circling turret tracks this tick's aircraft attitude before firing"
     bool offset_reference = false;
     float firing_tolerance = 0.5f;
     SECTION("Yawing level aircraft") {}
-    SECTION("Aircraft also banks and pitches") { banking = true; }
+    SECTION("Aircraft also banks and pitches") {
+        banking = true;
+    }
     SECTION("A faster circle remains within the turret slew rate") {
         banking = true;
         fast_circle = true;
@@ -78,7 +80,8 @@ TEST_CASE("A circling turret tracks this tick's aircraft attitude before firing"
                 KLift = 2, KLiftDamping = 2, LiftFactor = 5, CirclingDirChange = false,
                 CirclingRadiusChangeMinRatio = 0.7, CirclingRadiusChangeMaxRatio = 0.7,
                 CirclingElevationChangeRatio = 0}}
-    )").ok());
+    )")
+                .ok());
     lua_State* L = lua.raw();
     lua_pushstring(L, "Air");
     lua_rawget(L, -2);
@@ -110,7 +113,8 @@ TEST_CASE("A circling turret tracks this tick's aircraft attitude before firing"
     REQUIRE(lua.do_string(R"(
         SyntheticAircraft = setmetatable({}, {__index = moho.unit_methods})
         SyntheticAircraft.__index = SyntheticAircraft
-    )").ok());
+    )")
+                .ok());
     lua_pushstring(L, "__osc_unit_script_classes");
     lua_newtable(L);
     lua_pushstring(L, "synthetic_hover_turret");
@@ -157,7 +161,8 @@ TEST_CASE("A circling turret tracks this tick's aircraft attitude before firing"
     REQUIRE(lua.do_string(R"(
         return {CanWeaponFire = function(self) return true end,
                 OnFire = function(self) self.Fired = (self.Fired or 0) + 1 end}
-    )").ok());
+    )")
+                .ok());
     gun->lua_table_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     auto* weapon = gun.get();
     aircraft->add_weapon(std::move(gun));
@@ -198,8 +203,7 @@ TEST_CASE("A circling turret tracks this tick's aircraft attitude before firing"
         const auto after = aircraft->orientation();
         const float body_dot = std::abs(before.x * after.x + before.y * after.y +
                                         before.z * after.z + before.w * after.w);
-        largest_body_step = std::max(largest_body_step,
-                                    2.0f * std::acos(std::min(body_dot, 1.0f)));
+        largest_body_step = std::max(largest_body_step, 2.0f * std::acos(std::min(body_dot, 1.0f)));
         const auto position = aircraft->position();
         path += std::hypot(position.x - last.x, position.z - last.z);
         last = position;

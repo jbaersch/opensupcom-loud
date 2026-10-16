@@ -187,7 +187,8 @@ TEST_CASE("The sim rate: an integer game speed, 10^(rate/10) times normal",
             assert(GetSimRate() == rate, 'callback sees the applied speed')
             table.insert(__heard, rate)
         end}}
-    )").ok());
+    )")
+                .ok());
     const int stack_top = lua_gettop(L);
     const auto rate_after = [&](const char* code) {
         REQUIRE(lua.do_string(code).ok());
@@ -216,7 +217,8 @@ TEST_CASE("The sim rate: an integer game speed, 10^(rate/10) times normal",
             assert(__heard[i] == rate, 'HUD speed notification ' .. i)
         end
         assert(GetSimRate() == 0 and GetGameSpeed() == 0, 'reset returns to normal')
-    )").ok());
+    )")
+                .ok());
 }
 
 TEST_CASE("ConTextMatches lists the console's names starting with the text", "[ui][console]") {
