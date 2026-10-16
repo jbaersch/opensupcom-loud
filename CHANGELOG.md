@@ -12,6 +12,15 @@ A release bumps `project(VERSION)` in `CMakeLists.txt` and `version-string` in
 
 ## [Unreleased]
 
+### LOUD contribution branch (2026-10-16)
+
+- Preserve source menu/player-slot initialization and stop invalid sessions.
+- Correct script-facing weapon, order, navigation and spatial-query contracts.
+- Reduce repeated path/query work and improve large-battle icon capacity.
+- Add synthetic regression tests; see [scope and measured limits](docs/loud-fork.md).
+- Development replay format is 17; fresh matches and matching builds are required.
+
+
 Everything so far: there has been no release yet. The first will be 0.1.0.
 
 ### Added

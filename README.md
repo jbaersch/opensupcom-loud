@@ -1,4 +1,10 @@
-# OpenSupCom
+# OpenSupCom — LOUD compatibility fork
+
+Experimental contribution branch of [bwiemz/supcom-engine](https://github.com/bwiemz/supcom-engine).
+For this fork's changes, build/run instructions, validation and remaining gaps,
+start with [LOUD compatibility and combat-tick work](docs/loud-fork.md).
+No game data is included. The project overview below is inherited from upstream;
+it is not an additional LOUD acceptance claim.
 
 An open-source reimplementation of the Moho engine that powers *Supreme Commander: Forged Alliance*.
 
@@ -71,7 +77,7 @@ Over 166 milestones have been completed across the simulation, renderer, UI, and
 - Terrain decal rendering: .scmap binary decal parsing (2,236 decals on Seton's Clutch), instanced textured quads with per-decal model matrices, alpha blending with depth bias z-fighting prevention, LOD distance culling, pre-sorted texture grouping for allocation-free per-frame draw
 - Projectile rendering: weapon ProjectileId parsing, blueprint_id on projectiles in all creation paths (C++ auto-fire + 3 Lua paths), velocity-aligned orientation via euler_to_quat, MeshCache mesh/texture resolution for projectile blueprints, UnitRenderer integration (no new pipeline needed)
 - Shadow mapping: 2048x2048 depth-only shadow pass (terrain + meshes + cubes), orthographic light frustum centered on camera, comparison sampler with hardware bilinear PCF, calcShadow() in terrain/mesh/unit fragment shaders, depth bias for acne prevention
-- Spatial hash grid: 32-unit cell spatial partitioning for EntityRegistry, auto-notify on set_position, O(K) collect_in_radius/collect_in_rect (was O(N) over 5,000+ entities), retroactive entity insertion, swap-and-pop cell removal
+- Spatial hash grid: 16-unit cell spatial partitioning for EntityRegistry, auto-notify on set_position, O(K) collect_in_radius/collect_in_rect (was O(N) over 5,000+ entities), retroactive entity insertion, swap-and-pop cell removal
 - Unit sound: PlayUnitSound/PlayUnitAmbientSound/StopUnitAmbientSound with Blueprint.Audio lookup
 - Medium-priority stubs: SetBoneEnabled per-bone anim disable, AddOnGivenCallback with army transfer
 - Low-priority stubs: IEffect/CollisionBeam Destroy/BeenDestroyed state, CreateBuilderArmController

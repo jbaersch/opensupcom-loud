@@ -1,5 +1,13 @@
 # OpenSupCom Engineering Roadmap
 
+## LOUD contribution branch, 2026-10-16
+
+Startup, source APIs, combat, movement and query-cost changes are available for
+review in separate commits. See [scope/tests/measurements](loud-fork.md) and the
+[design contract](plans/2026-10-16-loud-fork-contract.md). Shared LAN autosave/resume,
+three-player LOUD acceptance and Windows acceptance of this branch remain open.
+The roadmap below retains upstream's broader milestones and validation history.
+
 **Status:** living document. Created 2026-09-22 from a code-level audit of `main` at `b91732d`.
 **Scope:** everything from "builds on Linux" to "shippable 1.0". The per-milestone
 implementation plans live in `docs/superpowers/plans/`. Measured status lives in

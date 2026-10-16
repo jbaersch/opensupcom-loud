@@ -11,3 +11,18 @@ smoke_report.txt
 
 # Python bytecode (a tool importing another, as cross_os_pairs.py does run_pair.py)
 __pycache__/
+
+# Private development state; never publish captures or installation data.
+/analysis/
+/.tools/
+/.worktrees/
+/userdata/
+/docs/local/
+/START_HERE.md
+/.codex/
+*.scd
+*.nx2
+*.scmap
+*.oscreplay
+*.oscsave
+Game.prefs
