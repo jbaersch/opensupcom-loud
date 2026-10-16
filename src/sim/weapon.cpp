@@ -163,10 +163,19 @@ bool shooter_room(Projectile& proj, const EntityRegistry& registry) {
 /// order. One that shoots units takes the grid of units alone, which a
 /// map's props and the projectiles in flight aren't in; one that shoots
 /// projectiles takes every entity (can_pick keeps the projectiles).
-std::vector<u32> target_candidates(const EntityRegistry& registry, bool projectiles, f32 x, f32 z,
-                                   f32 reach) {
-    if (projectiles) return registry.collect_in_radius(x, z, reach);
-    const std::vector<Entity*> units = registry.units_in_radius(x, z, reach);
+std::vector<u32> target_candidates(const EntityRegistry& registry, bool projectiles,
+                                   const Unit& owner, const SimState* sim, f32 reach) {
+    const Vector3& at = owner.position();
+    if (projectiles) return registry.collect_in_radius(at.x, at.z, reach);
+    const i32 owner_army = owner.army();
+    // Alliance checks are pure during this unit scan. Avoid collecting and
+    // sorting units that can_pick will reject; retain all later eligibility
+    // checks and their canonical id order.
+    const std::vector<Entity*> units =
+        registry.units_in_radius_if(at.x, at.z, reach, [owner_army, sim](const Entity& unit) {
+            return unit.army() >= 0 &&
+                   (sim ? sim->is_enemy(owner_army, unit.army()) : unit.army() != owner_army);
+        });
     std::vector<u32> ids;
     ids.reserve(units.size());
     for (const Entity* unit : units) ids.push_back(unit->entity_id());
@@ -592,8 +601,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     f32 best_dist2 = 0;
     const f32 reach = max_range * std::max(1.0f, tracking_radius);
     static const CategoryName kBenign{"BENIGN"};
-    for (const u32 id : target_candidates(registry, targets_projectiles, owner.position().x,
-                                          owner.position().z, reach)) {
+    for (const u32 id : target_candidates(registry, targets_projectiles, owner, sim, reach)) {
         Entity* e = registry.find(id);
         if (!e || !can_target(owner, *e, sim)) continue;
         if (e->is_unit() && static_cast<const Unit&>(*e).has_category(kBenign)) {

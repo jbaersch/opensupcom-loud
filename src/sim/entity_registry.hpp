@@ -95,6 +95,18 @@ public:
     /// what was unregistered meanwhile.
     std::vector<Entity*> units_in_radius(f32 x, f32 z, f32 radius) const;
 
+    /// The same ordered query, collecting only units accepted by a pure
+    /// predicate, invoked synchronously in unspecified order. It must not
+    /// mutate entities or the registry or depend on traversal order. Rejected
+    /// units need no sorting or copying; pointer lifetime is unchanged.
+    template <typename F>
+    std::vector<Entity*> units_in_radius_if(f32 x, f32 z, f32 radius, const F& accept) const {
+        return units_in_radius_impl(
+            x, z, radius,
+            [](const Entity& e, const void* ctx) { return (*static_cast<const F*>(ctx))(e); },
+            &accept);
+    }
+
     /// Collect entity IDs within an axis-aligned rectangle (2D, ignoring Y),
     /// in ascending id order.
     std::vector<u32> collect_in_rect(f32 x0, f32 z0, f32 x1, f32 z1) const;
@@ -223,6 +235,9 @@ private:
 
     bool any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1, bool (*visit)(const Entity&, void*),
                                 void* ctx) const;
+    std::vector<Entity*> units_in_radius_impl(f32 x, f32 z, f32 radius,
+                                              bool (*accept)(const Entity&, const void*),
+                                              const void* ctx) const;
     void world_to_cell(f32 wx, f32 wz, i32& cx, i32& cz) const;
     size_t cell_index(i32 cx, i32 cz) const;
     void grid_insert(Entity& entity, i32 cx, i32 cz);

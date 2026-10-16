@@ -227,3 +227,53 @@ TEST_CASE("units_in_radius and units_in_rect are collect_in_radius's and collect
     fill(flat);
     check_matches(flat);
 }
+
+TEST_CASE("Filtered unit-radius queries retain the unfiltered query's order and lifecycle",
+          "[determinism][filtered-radius]") {
+    EntityRegistry reg;
+    SECTION("Without a spatial grid") {}
+    SECTION("With a spatial grid") {
+        reg.init_spatial_grid(256, 256);
+    }
+    std::vector<osc::u32> ids;
+    for (int i = 0; i < 80; ++i) {
+        const auto id =
+            add(reg, static_cast<float>((i * 37) % 200), static_cast<float>((i * 53) % 200));
+        reg.find(id)->set_army(i % 3 - 1);
+        ids.push_back(id);
+    }
+    auto prop = std::make_unique<Prop>();
+    prop->set_position({100, 0, 100});
+    prop->set_army(1);
+    reg.register_entity(std::move(prop));
+    // An exact diagonal boundary, and an entity on the query centre.
+    reg.find(ids[0])->set_position({103, 0, 104});
+    reg.find(ids[1])->set_position({100, 0, 100});
+    static_cast<Unit*>(reg.find(ids[2]))->begin_dying();
+    reg.find(ids[3])->mark_destroyed();
+    reg.unregister_entity(ids[4]);
+    const auto compare = [&] {
+        for (int army : {-1, 0, 1}) {
+            const auto accepted = [army](const Entity& e) { return e.army() == army; };
+            for (const auto& [x, z, r] : std::vector<std::array<float, 3>>{
+                     {100, 100, 5}, {100, 100, 0}, {0, 0, 300}, {-50, -50, 10}}) {
+                std::vector<osc::u32> expected;
+                for (const auto* e : reg.units_in_radius(x, z, r)) {
+                    if (accepted(*e)) expected.push_back(e->entity_id());
+                }
+                std::vector<osc::u32> got;
+                for (const auto* e : reg.units_in_radius_if(x, z, r, accepted))
+                    got.push_back(e->entity_id());
+                CHECK(got == expected);
+            }
+        }
+    };
+    compare();
+    reg.find(ids[0])->set_army(1);
+    reg.find(ids[1])->set_position({199, 0, 199});
+    reg.find(ids[7])->set_position({100, 0, 100});
+    reg.collect_garbage();
+    compare();
+    reg.init_spatial_grid(256, 256); // Also covers rebuilding a previously absent grid.
+    compare();
+}

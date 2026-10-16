@@ -227,12 +227,17 @@ std::vector<u32> EntityRegistry::collect_in_radius(f32 x, f32 z,
 }
 
 std::vector<Entity*> EntityRegistry::units_in_radius(f32 x, f32 z, f32 radius) const {
+    return units_in_radius_impl(x, z, radius, nullptr, nullptr);
+}
+
+std::vector<Entity*> EntityRegistry::units_in_radius_impl(
+    f32 x, f32 z, f32 radius, bool (*accept)(const Entity&, const void*), const void* ctx) const {
     std::vector<Entity*> result;
     const f32 r2 = radius * radius;
     const auto within = [&](const Entity& e) {
         const f32 dx = e.position().x - x;
         const f32 dz = e.position().z - z;
-        return dx * dx + dz * dz <= r2;
+        return dx * dx + dz * dz <= r2 && (!accept || accept(e, ctx));
     };
     if (!grid_initialized_) {
         for_each_unit([&](Entity& e) {

@@ -47,6 +47,7 @@ add_executable(osc_tests
     test_guard_area_assist.cpp
     test_ground_attack.cpp
     test_primary_weapon_target.cpp
+    test_target_recheck.cpp
     test_command_feedback.cpp
     test_seabed_layer.cpp
     test_raised_platforms.cpp
