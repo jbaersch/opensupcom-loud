@@ -12,6 +12,7 @@ namespace osc::sim {
 CategoryExpr CategoryExpr::all() {
     CategoryExpr e;
     e.op_ = Op::All;
+    e.rebuild_category_id();
     return e;
 }
 
@@ -20,12 +21,14 @@ CategoryExpr CategoryExpr::name(std::string category) {
     CategoryExpr e;
     e.op_ = Op::Name;
     e.name_ = std::move(category);
+    e.rebuild_category_id();
     return e;
 }
 
 CategoryExpr CategoryExpr::combine(Op op, CategoryExpr left, CategoryExpr right) {
     CategoryExpr e;
     e.op_ = op;
+    e.rebuild_category_id();
     e.operands_.push_back(std::move(left));
     e.operands_.push_back(std::move(right));
     return e;
@@ -42,6 +45,27 @@ bool CategoryExpr::matches(const std::unordered_set<std::string>& categories) co
         return operands_[0].matches(categories) && operands_[1].matches(categories);
     case Op::Difference:
         return operands_[0].matches(categories) && !operands_[1].matches(categories);
+    }
+    return false;
+}
+
+void CategoryExpr::rebuild_category_id() {
+    category_id_ = op_ == Op::All    ? CategoryIds::intern("ALLPROJECTILES")
+                   : op_ == Op::Name ? CategoryIds::intern(name_)
+                                     : 0;
+}
+
+bool CategoryExpr::matches_bits(const CategoryBits& categories) const {
+    switch (op_) {
+    case Op::None: return false;
+    case Op::All: return !categories.test(category_id_);
+    case Op::Name: return categories.test(category_id_);
+    case Op::Union:
+        return operands_[0].matches_bits(categories) || operands_[1].matches_bits(categories);
+    case Op::Intersection:
+        return operands_[0].matches_bits(categories) && operands_[1].matches_bits(categories);
+    case Op::Difference:
+        return operands_[0].matches_bits(categories) && !operands_[1].matches_bits(categories);
     }
     return false;
 }

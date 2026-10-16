@@ -139,6 +139,14 @@ const std::unordered_set<std::string>& target_categories(const Entity& target) {
     return kNone;
 }
 
+bool matches_target(const CategoryExpr& expression, const Entity& target) {
+    // Unit categories already have interned bits. Projectiles retain their
+    // existing string-set path; neither test runs a callback or draws RNG.
+    if (target.is_unit())
+        return expression.matches_bits(static_cast<const Unit&>(target).category_bits());
+    return expression.matches(target_categories(target));
+}
+
 /// Whether `proj` has room for another shooter under its DesiredShooterCap.
 /// Its list of shooters is pruned first of weapons that have let it go.
 bool shooter_room(Projectile& proj, const EntityRegistry& registry) {
@@ -436,9 +444,8 @@ bool Weapon::can_pick(const Unit& owner, const Entity& target, const SimState* s
             return false;
         if (above_water_targets_only && proj.in_water) return false;
     }
-    const auto& categories = target_categories(target);
-    return (restrict_only_allow.empty() || restrict_only_allow.matches(categories)) &&
-           !restrict_disallow.matches(categories);
+    return (restrict_only_allow.empty() || matches_target(restrict_only_allow, target)) &&
+           !matches_target(restrict_disallow, target);
 }
 
 bool Weapon::can_target(const Unit& owner, const Entity& target, const SimState* sim,
@@ -474,9 +481,8 @@ bool Weapon::can_attack_target_of(const Unit& owner, const Weapon& holder,
 
 int Weapon::priority_of(const Entity& target) const {
     if (target_priorities.empty()) return 0;
-    const auto& categories = target_categories(target);
     for (size_t i = 0; i < target_priorities.size(); ++i) {
-        if (target_priorities[i].matches(categories)) return static_cast<int>(i);
+        if (matches_target(target_priorities[i], target)) return static_cast<int>(i);
     }
     return -1;
 }
@@ -697,8 +703,8 @@ bool can_attack_target(const Unit& unit, const Unit& target, bool range_check) {
             continue;
         }
         if ((!w->restrict_only_allow.empty() &&
-             !w->restrict_only_allow.matches(target.categories())) ||
-            w->restrict_disallow.matches(target.categories())) {
+             !w->restrict_only_allow.matches_bits(target.category_bits())) ||
+            w->restrict_disallow.matches_bits(target.category_bits())) {
             continue;
         }
         if (unit.is_mobile() || !range_check || (w->min_range <= dist && dist <= w->max_range)) {

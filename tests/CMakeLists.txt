@@ -35,6 +35,7 @@ add_executable(osc_tests
     test_silo_blocks.cpp
     test_blueprint_categories.cpp
     test_category_expr.cpp
+    test_category_bit_contract.cpp
     test_scm_bones.cpp
     test_pose.cpp
     test_prop_collision.cpp

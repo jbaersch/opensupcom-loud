@@ -543,6 +543,7 @@ void StateIO::load(StateReader& r, Navigator& n, SimState& sim, i32 army) {
 // ------------------------------------------------------ Category rules
 
 void StateIO::save(StateWriter& w, const CategoryExpr& c) {
+    // category_id_ is process-local and derived from op_/name_, not saved.
     enum8(w, c.op_);
     w.str(c.name_);
     w.size(c.operands_.size());
@@ -553,6 +554,7 @@ void StateIO::load(StateReader& r, CategoryExpr& c, int depth) {
     if (depth > 64) return r.fail("a category rule nested too deep");
     c.op_ = enum8<CategoryExpr::Op>(r);
     c.name_ = r.str();
+    c.rebuild_category_id();
     c.operands_.resize(r.size(5));
     for (CategoryExpr& o : c.operands_) load(r, o, depth + 1);
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sim/category_set.hpp"
+
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -30,6 +32,9 @@ public:
 
     bool empty() const { return op_ == Op::None; }
     bool matches(const std::unordered_set<std::string>& categories) const;
+    /// Equivalent unit-category test using the Unit's existing bit set.
+    /// Name IDs are derived when compiled or loaded, never serialized.
+    bool matches_bits(const CategoryBits& categories) const;
 
     Op op() const { return op_; }
     /// A Name's category
@@ -39,8 +44,10 @@ public:
 
 private:
     Op op_ = Op::None;
+    u32 category_id_ = 0; // Name, or ALLPROJECTILES for All; derived from op_/name_
     std::string name_;
     std::vector<CategoryExpr> operands_; // two, for the set operations
+    void rebuild_category_id();
 };
 
 /// Compile the Lua category at `index` ({__name = ...} or
