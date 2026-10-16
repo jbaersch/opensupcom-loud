@@ -162,7 +162,11 @@ jobs:
         run: cmake --preset default
 
       - name: Build
-        run: cmake --build --preset default
+        # Bound both MSBuild project concurrency and per-project source jobs.
+        # Keep CL out of Configure so vcpkg's dependency ABI/cache is unchanged.
+        env:
+          CL: /MP2
+        run: cmake --build --preset default --parallel 2
 
       - name: Test (data-free)
         run: ctest --test-dir build -C Debug -LE data --output-on-failure
@@ -171,7 +175,9 @@ jobs:
       # played by this build under Wine and by a Linux build, on the same
       # game data. Release, since Wine has no debug C runtime.
       - name: Build Release for the cross-OS check
-        run: cmake --build build --config Release --target opensupcom osc_integration
+        env:
+          CL: /MP2
+        run: cmake --build build --config Release --target opensupcom osc_integration --parallel 2
 
       - name: Upload the Windows build
         uses: actions/upload-artifact@v7.0.2
