@@ -76,6 +76,18 @@ jobs:
             sudo ln -sf "/usr/bin/${tool}-22" "/usr/local/bin/${tool}"
           done
 
+      - name: Format (changed lines)
+        if: matrix.lint
+        env:
+          FORMAT_BASE_BRANCH: ${{ github.base_ref }}
+        run: |
+          python3 tools/test_check_format.py
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            tools/check_format.sh "origin/$FORMAT_BASE_BRANCH"
+          else
+            tools/check_format.sh origin/main
+          fi
+
       - name: Restore vcpkg binary cache
         uses: actions/cache@v6.1.0
         with:
@@ -125,17 +137,6 @@ jobs:
       - name: Lint (clang-tidy ratchet)
         if: matrix.lint
         run: ctest --preset ${{ matrix.preset }} -L lint --output-on-failure
-
-      - name: Format (changed lines)
-        if: matrix.lint
-        env:
-          FORMAT_BASE_BRANCH: ${{ github.base_ref }}
-        run: |
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            tools/check_format.sh "origin/$FORMAT_BASE_BRANCH"
-          else
-            tools/check_format.sh origin/main
-          fi
 
   windows:
     name: windows-msvc

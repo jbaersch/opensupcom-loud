@@ -85,7 +85,21 @@ def changed_lines(base: str) -> dict[str, list[tuple[int, int]]]:
     # went, so a move is not a wholesale change. Deleted files, and files
     # whose pairing -B broke (B), are read too: what they held may have
     # moved.
-    diff = git("diff", "-B", "-M", "-U0", "--no-color", "--diff-filter=ABCDMR", base, "--", *PATHS)
+    # The parser expects b/ paths. User settings such as diff.mnemonicPrefix
+    # or diff.noprefix must not silently turn a source diff into zero files.
+    diff = git(
+        "diff",
+        "-B",
+        "-M",
+        "-U0",
+        "--no-color",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "--diff-filter=ABCDMR",
+        base,
+        "--",
+        *PATHS,
+    )
     hunks: list[tuple[str, list[tuple[int, str]]]] = []  # (path, added lines)
     deleted_index = Deleted()
     deleted: list[str] = []
