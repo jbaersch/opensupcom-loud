@@ -74,7 +74,7 @@ full gameplay suite. Record what was tested and what remains unverified.
 ```sh
 git status --short
 git log --oneline origin/codex/loud..HEAD
-git push -u origin HEAD
+git push -u origin codex/short-topic
 ```
 
 On a topic branch this publishes the topic, not the maintained branch. When it is

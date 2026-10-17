@@ -80,3 +80,6 @@ Check upstream at the start of each work package. Recurring monitoring requires
 an explicitly configured job; this guide does not activate one. Monitoring should
 report actionable changes and request integration through the normal development
 workflow, rather than changing the accepted build automatically.
+
+The dated [upstream contribution queue](upstream-contributions.md) records the
+latest overlap decisions and the next integration boundary.
