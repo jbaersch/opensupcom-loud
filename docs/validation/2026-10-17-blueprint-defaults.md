@@ -55,9 +55,12 @@ or visual acceptance is claimed. The seven skips are three unavailable FAF
 checks and four missing goldens. Do not replace data or regenerate baselines
 merely to make this run green.
 
-The candidate's GitHub matrix was also dispatched for this exact head:
-[CI run](https://github.com/jbaersch/opensupcom-loud/actions/runs/39064427794).
-Its results must be checked separately from this local record.
+CI follow-up, checked on 2026-10-18: the exact candidate head passed all five
+jobs in [the fork CI run](https://github.com/jbaersch/opensupcom-loud/actions/runs/39064427794):
+GCC, Clang, ASan/UBSan, Windows MSVC and cross-OS play (all eight synthetic
+pairs). The maintained fork's documentation head `4ec6b715` also passed
+[all five jobs](https://github.com/jbaersch/opensupcom-loud/actions/runs/39064554361).
+These data-free results do not change the local retail-gate figures above.
 
 Commands, with the same isolated build directory substituted for `<build>`:
 
@@ -79,15 +82,20 @@ its separate Git-prefix bug is not bundled into this candidate.
 
 ## Limits and handoff
 
-No Windows, cross-OS or full LOUD/mod-stack acceptance is claimed for this
-candidate. No save fields or format numbers change. Existing build identity
+Windows compilation/data-free tests and synthetic cross-OS play passed in CI.
+Real-data Windows/cross-OS and full LOUD/mod-stack acceptance remain unverified.
+No save fields or format numbers change. Existing build identity
 guards remain active; the accepted LOUD launcher and its layout-56 saves stay
 with their matching old build. This candidate's upstream base uses layout 60.
 
-The next action is upstream review of the three-file candidate after checking
-for newer overlapping work. No upstream PR or maintainer message was sent as
-part of this preparation. See the [contribution queue](../upstream-contributions.md)
-and [fork issue #1](https://github.com/jbaersch/opensupcom-loud/issues/1).
+Submitted on 2026-10-18 as [upstream PR #733](https://github.com/bwiemz/supcom-engine/pull/733),
+after confirming that main still omitted both defaults and the other 13 open
+PRs did not implement this change. It contains one commit and three files.
+The [upstream CI run](https://github.com/bwiemz/supcom-engine/actions/runs/39108836806)
+awaits approval from a maintainer; no jobs have run there yet. Next action:
+maintainer review and the upstream checks after approval. See the
+[contribution queue](../upstream-contributions.md) and
+[fork issue #1](https://github.com/jbaersch/opensupcom-loud/issues/1).
 
 AI assistance: Codex prepared the current-base candidate and additional synthetic
 coverage. The original fix's historical model is unknown; its author is retained.
