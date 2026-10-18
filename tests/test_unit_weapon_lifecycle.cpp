@@ -135,4 +135,21 @@ TEST_CASE("Unit creation initializes source state before weapon callbacks",
     CHECK_FALSE(created->get_weapon(0)->enabled);
     CHECK(created->manipulators().size() == 1);
     CHECK(created->is_being_built() == !complete);
+
+    // A retained unit handle may expose a weapon after Destroy, until the
+    // deletion queue drains. Reading it must not restart its script lifecycle.
+    REQUIRE(lua.do_string(R"(
+        old_weapon = created:GetWeapon(1)
+        moho.entity_methods.Destroy(created)
+        late_weapon = created:GetWeapon(1)
+        assert(late_weapon and late_weapon.Label == 'Marker')
+        assert(WeaponCreates == 1, 'destroyed owner restarted weapon OnCreate')
+    )")
+                .ok());
+    sim.tick();
+    lua_getglobal(lua.raw(), "late_weapon");
+    lua_pushstring(lua.raw(), "_c_object");
+    lua_rawget(lua.raw(), -2);
+    CHECK(lua_touserdata(lua.raw(), -1) == nullptr);
+    lua_pop(lua.raw(), 2);
 }

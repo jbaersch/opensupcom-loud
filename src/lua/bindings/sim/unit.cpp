@@ -956,7 +956,9 @@ static int unit_GetWeapon(lua_State* L) {
     weapon->lua_table_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     weapon->script_class = classed;
 
-    if (classed) {
+    // A handle read after Destroy survives only until the deletion queue
+    // drains. Its weapon was already retired; do not restart OnCreate.
+    if (classed && !unit->destroyed() && unit->in_registry()) {
         const std::string label = weapon->label;
         lua_pushstring(L, "OnCreate");
         lua_gettable(L, wtable);
