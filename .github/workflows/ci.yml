@@ -128,7 +128,9 @@ jobs:
 
       - name: Format (changed lines)
         if: matrix.lint && github.event_name == 'pull_request'
-        run: tools/check_format.sh "origin/${{ github.base_ref }}"
+        run: |
+          python3 -m unittest tools.test_check_format
+          tools/check_format.sh "origin/${{ github.base_ref }}"
 
   windows:
     name: windows-msvc
