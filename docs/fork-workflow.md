@@ -4,9 +4,10 @@ The development repository is
 [jbaersch/opensupcom-loud](https://github.com/jbaersch/opensupcom-loud), a public
 GitHub fork of [bwiemz/supcom-engine](https://github.com/bwiemz/supcom-engine).
 The existing [contribution guide](../CONTRIBUTING.md) applies; this page specifies
-the fork's branch and publishing workflow. The tested engine starts from upstream
-`a799c964`; see [scope and evidence](loud-fork.md) before interpreting newer
-upstream features as part of the LOUD acceptance.
+the fork's branch and publishing workflow. The initial accepted gameplay build
+starts from upstream `a799c964`. New integration candidates have separate
+[scope and evidence](loud-fork.md); fetching or merging a newer upstream does
+not transfer that earlier acceptance.
 
 ## Branches and remotes
 

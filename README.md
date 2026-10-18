@@ -39,6 +39,11 @@ AI assistance was used in development and review.
 
 ## What has been checked
 
+The table below records the initial accepted build. The separate
+[upstream integration candidate](docs/validation/2026-10-18-loud-upstream-integration.md)
+merges upstream `d98ad203` and has its own technical and gameplay acceptance;
+its long-duration and large-load checks are still pending.
+
 | Evidence | Scope |
 | --- | --- |
 | Normal LOUD AI skirmish | A local original-script match ended naturally at tick 16,149, with real AI construction/combat and no registered source/thread faults. Its accepted build's replay matched every recorded tick checksum. |

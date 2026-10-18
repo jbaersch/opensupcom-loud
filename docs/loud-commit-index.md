@@ -55,3 +55,21 @@ individual commit applies independently to the newest upstream main.
   which include its headers directly. No runtime C++ changes.
 - The following documentation/CI commit records fork scope, source contracts,
   validation limits and CI triggers for `codex/**` contribution branches.
+
+## Pinned upstream integration candidate
+
+The candidate merges upstream `d98ad203` into public LOUD base `44f04de3`,
+retaining the initial stack and upstream history. These entries follow that
+merge; see the [acceptance record](validation/2026-10-18-loud-upstream-integration.md)
+for the exact tested source head and limits.
+
+| Commit | Change |
+| --- | --- |
+| `b2852e19` | Merge the pinned upstream, reconcile construction/flight/ground motion and scaled icon rendering. |
+| `b6d4de67` | Share the authoritative native cheat option with UI and queued callbacks. |
+| `72c351a3` | Adopt the separately reviewed localized retail-selector tests from `69e6ab4f`. |
+| `c82d9a59` | Compose muzzle and shared aiming with the animated barrel frame. |
+| `7cab78f0` | Avoid restarting weapon initialization through a destroyed unit's retained handle. |
+| `95436317` | Restore mobile-build footprint snapping at preparation. |
+| `90c9c14b` | Preserve clear physical route segments, sidestep returns and footprint escape. |
+| `65ff5595` | Give synthetic material plates valid unarmed fixtures and check actual projectile-table identity. |

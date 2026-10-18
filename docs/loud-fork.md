@@ -20,13 +20,13 @@ development and review. See the [commit index](loud-commit-index.md) and
 [implementation contract](plans/2026-10-16-loud-fork-contract.md).
 
 The initial acceptance checked upstream `main` at
-`68c79d06cfe6a40b58c69b765f8cddb4d88ad428`. Its four subsequent mainline commits
-are not merged here: the warp/world-shape, fog and cartographic rendering work
-needs its own integration review. The open camera fix
-[#682](https://github.com/bwiemz/supcom-engine/pull/682) was also inspected and is
-not included in that acceptance. Later upstream revisions remain separate on
-`main` until they receive an integration review. This branch is suitable for reviewing individual fixes against
-their tested base, rather than claiming to be the newest upstream release.
+`68c79d06cfe6a40b58c69b765f8cddb4d88ad428`; its subsequent rendering/camera work
+was not part of that accepted executable. The separate integration candidate
+now merges upstream `d98ad20318aed5c44ae861e59a0358d84ed62b99`. Its overlap
+decisions, technical checks and remaining acceptance are in the
+[dated integration record](validation/2026-10-18-loud-upstream-integration.md).
+The preserved gameplay build remains separate while long-duration and large-load
+acceptance of the candidate is pending.
 
 Useful review groups, in dependency order:
 
@@ -85,12 +85,17 @@ sandbox. Development runs used a read-only installation and isolated writable
 runtime directories. No original game executable was started for these checks.
 
 **Start a fresh match.** Player-table transport introduces replay format 17;
-the save container remains 4 and the native snapshot layout is 56. Existing
+the save container remains 4 and this integration candidate uses native snapshot
+layout 60 (the preserved initial gameplay build used 56). Existing
 build/content identity guards remain enabled. Keep older saves and their matching
 executables; cross-build replay or snapshot loading is not promised. These
 changes do not implement common multiplayer save/resume.
 
 ## Validation and measured limits
+
+These measurements describe the initial accepted build. They do not transfer
+automatically to the newer upstream-integration candidate; see its separate
+[acceptance record](validation/2026-10-18-loud-upstream-integration.md).
 
 The pre-export engine/test source passed 1,639 Catch2 cases / 322,904 assertions,
 18 architecture checks and four local two-process lockstep checks on Linux.
