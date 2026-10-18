@@ -594,12 +594,22 @@ void AimManipulator::tick(f32 dt) {
         // Moho's CAimManipulator::CheckTracking: the pitch in the pitch bone's
         // frame as the animation left it.
         Quaternion barrel{};
-        if (pitches && !from_reference &&
+        if (pitches && !(builder_arm_ && from_reference) &&
             descends_from(*unit->bone_data(), pitch_bone_, yaw_bone_)) {
             const Quaternion yaw_posed = unit->bone_pose(yaw_bone_).rotation;
             const Quaternion pitch_posed = unit->bone_pose(pitch_bone_).rotation;
+            // Strip every active aim on these shared bones before measuring
+            // the animated barrel. Their residual angles are subtracted below.
+            // Removing only ours would count the other controllers twice.
+            f32 posed_pitch = pitch_;
+            for (const auto& manipulator : unit->manipulators()) {
+                const auto* peer = dynamic_cast<const AimManipulator*>(manipulator.get());
+                if (peer && peer != this && !peer->is_destroyed() && peer->enabled() &&
+                    peer->yaw_bone_ == yaw_bone_ && peer->pitch_bone_ == pitch_bone_)
+                    posed_pitch += peer->pitch_;
+            }
             barrel = quat_multiply(quat_multiply(quat_conjugate(yaw_posed), pitch_posed),
-                                   quat_axis_angle('x', pitch_));
+                                   quat_axis_angle('x', posed_pitch));
         }
         const Vector3 w =
             quat_rotate(quat_conjugate(barrel),

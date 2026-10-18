@@ -321,6 +321,11 @@ TEST_CASE("A yaw-only aim controller is on target by its heading, whatever its p
 
 TEST_CASE("An aim controller's pitch arc is measured from its barrel as the animation left it",
           "[pose][aim]") {
+    bool muzzle_reference = false;
+    SECTION("aim from the turret pivots") {}
+    SECTION("aim from a weapon muzzle reference") {
+        muzzle_reference = true;
+    }
     constexpr f32 kDeg = 0.0174533f;
     for (const f32 tilt : {0.0f, 30.0f}) {
         BoneData bd = make_two_bones();
@@ -349,6 +354,7 @@ TEST_CASE("An aim controller's pitch arc is measured from its barrel as the anim
         aim.set_precedence(10);
         aim.set_yaw_bone(0);
         aim.set_pitch_bone(1);
+        if (muzzle_reference) aim.set_muzzle_bone(1);
         aim.set_firing_arc(-180.0f, 180.0f, 90.0f, -45.0f, 45.0f, 90.0f);
         const f32 up = 70.0f * kDeg;
         const f32 heading = 30.0f * kDeg;

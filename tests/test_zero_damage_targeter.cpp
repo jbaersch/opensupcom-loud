@@ -132,6 +132,9 @@ TEST_CASE("A narrow weapon aims relative to another controller on its shared tur
     bones.name_to_index = {{"turret", 0}, {"barrel", 1}, {"muzzle", 2}};
     bool offset_muzzle = false;
     SECTION("The barrel shares the yaw pivot") {}
+    SECTION("The shared barrel has a tilted bind pose") {
+        bones.bones[1].local_rotation = osc::sim::quat_axis_angle('x', -0.5235987756f);
+    }
     SECTION("The barrel and muzzle are offset from the yaw pivot") {
         offset_muzzle = true;
         bones.bones[1].local_position = {4, 2, 0};
