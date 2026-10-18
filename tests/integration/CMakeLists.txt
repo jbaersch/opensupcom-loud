@@ -7,6 +7,7 @@ add_executable(osc_integration
     runner/test_modes.cpp
     runner/lan_modes.cpp
     runner/integration_tests.cpp
+    runner/ui_contracts_test.cpp
     runner/audio_data_test.cpp
     runner/map_parse_test.cpp
     runner/terrain_glow_test.cpp
