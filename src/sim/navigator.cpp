@@ -382,6 +382,13 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         return !sim_->pathfinder()->clear_segment(from.x, from.z, to.x, to.z, layer, draft,
                                                   amphibious);
     };
+    const auto inside_obstacle = [&] {
+        if (!sim_ || !sim_->pathfinding_grid()) return false;
+        const auto& grid = *sim_->pathfinding_grid();
+        u32 x = 0, z = 0;
+        grid.world_to_grid(from.x, from.z, x, z);
+        return grid.get(x, z) == map::CellPassability::Obstacle;
+    };
     const auto wait_for_new_path = [&](const Quaternion& facing) {
         status_ = Status::WaitingForPath;
         // Refusing translation must not throw away the turn computed by
@@ -469,10 +476,27 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         // ordinary straight overshoots within the existing waypoint (or
         // sidestep) tolerance, without cutting across the obstacle at a bend.
         // The Moho navigator supplies its own short-lived target cells.
+        // Inside a footprint, keep the existing escape-route corner passing:
+        // a factory rolloff need not detour within the building it leaves.
         const bool crossed =
             (pos.x - wp.x) * leg_x + (pos.z - wp.z) * leg_z > 0 &&
-            (moho_active_ || side * side <= tol * tol * (leg_x * leg_x + leg_z * leg_z));
+            (moho_active_ || side * side <= tol * tol * (leg_x * leg_x + leg_z * leg_z) ||
+             inside_obstacle());
         if (!reached && !crossed) break;
+        // Being near a corner is not enough when the unit's actual
+        // position cannot see the next leg. Keep the corner until driving
+        // toward it makes that segment clear, instead of replanning the
+        // same unusable shortcut at an obstacle's edge forever.
+        if (default_blocked(next)) {
+            // Steering's temporary point is not a corner of the searched
+            // route. Once reached, an obstructed return leg needs a new
+            // path from here, not an endless wait on the completed sidestep.
+            if (sidestep_ && waypoint_index_ == sidestep_index_ && reached) {
+                wait_for_new_path(unit.orientation());
+                return true;
+            }
+            break;
+        }
         ++waypoint_index_;
     }
     // Past its sidestep point, it looks again as it goes on (M203c).

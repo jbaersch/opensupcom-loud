@@ -439,3 +439,78 @@ TEST_CASE("Warm raw route scratch is absent from snapshots and cold restore cont
     CHECK(restored->position().x == mover.position().x);
     CHECK(restored->position().z == mover.position().z);
 }
+
+TEST_CASE("A nearby path corner is retained while the next leg crosses an obstacle",
+          "[nav][dynamic-navigation][corner-clearance]") {
+    DynamicWorld world;
+    world.structure(44, 75, 48, 2);
+    world.structure(96, 75, 48, 2);
+    auto& unit = world.mover();
+    // Beside the wall, near its start cell's centre but not on the smoothed
+    // centre-to-centre segment. Skipping that centre cuts the wall before
+    // the gap, and every replan used to repeat the same blocked first step.
+    unit.set_position({66.26294f, 10, 73.99763f});
+    unit.set_orientation(osc::sim::euler_to_quat(1.362f, 0, 0));
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    move.target_pos = {70, 10, 100};
+    unit.push_command(move, true);
+    bool crossed_wall = false;
+    for (int tick = 0; tick < 300; ++tick) {
+        world.sim.tick();
+        const auto p = unit.position();
+        crossed_wall |= p.z > 74 && p.z < 76 && ((p.x > 20 && p.x < 68) || (p.x > 72 && p.x < 120));
+    }
+    CHECK_FALSE(crossed_wall);
+    CHECK(unit.position().z > 98);
+    CHECK(unit.command_queue().empty());
+}
+
+TEST_CASE("A completed sidestep replans when its old continuation is behind a wall",
+          "[nav][dynamic-navigation][sidestep-clearance]") {
+    DynamicWorld world;
+    world.structure(44, 75, 48, 2);
+    world.structure(96, 75, 48, 2);
+    auto& unit = world.mover();
+    unit.set_position({66, 10, 71});
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    move.target_pos = {70, 10, 100};
+    unit.push_command(move, true);
+    world.sim.tick();
+    REQUIRE(unit.navigator().is_moving());
+    unit.navigator().set_goal(move.target_pos);
+    const osc::sim::Vector3 aside{65, 10, 73.8f};
+    unit.navigator().sidestep(aside);
+    unit.set_position(aside);
+    unit.set_orientation(osc::sim::euler_to_quat(-1.5707964f, 0, 0));
+    unit.note_drive(0, 0, 8, osc::sim::Unit::MotionTurn::Straight);
+    unit.navigator().update(unit, 8, 0.1, world.sim.terrain());
+    CHECK(unit.navigator().status() == osc::sim::Navigator::Status::WaitingForPath);
+    CHECK(unit.position().x == aside.x);
+    for (int tick = 0; tick < 300; ++tick) world.sim.tick();
+    CHECK(unit.position().z > 98);
+    CHECK(unit.command_queue().empty());
+}
+
+TEST_CASE("A unit inside its starting structure can leave directly toward its rolloff point",
+          "[nav][dynamic-navigation][footprint-exit]") {
+    DynamicWorld world;
+    world.structure(81, 39, 6, 6);
+    auto& unit = world.mover();
+    unit.set_position({80, 10, 40});
+    unit.set_orientation(osc::sim::euler_to_quat(-1.5707964f, 0, 0));
+    REQUIRE(world.sim.pathfinding_grid()->get(40, 20) == osc::map::CellPassability::Obstacle);
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    move.target_pos = {77.25f, 10, 40.35f};
+    unit.push_command(move, true);
+    float side = 0;
+    for (int tick = 0; tick < 150 && !unit.command_queue().empty(); ++tick) {
+        world.sim.tick();
+        side = std::max(side, std::abs(unit.position().z - move.target_pos.z));
+    }
+    CHECK(side < 0.5f);
+    CHECK(unit.position().x < 78);
+    CHECK(unit.command_queue().empty());
+}

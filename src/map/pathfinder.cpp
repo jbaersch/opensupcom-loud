@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cfloat>
 #include <functional>
+#include <limits>
 #include <queue>
 #include <spdlog/spdlog.h>
 
@@ -33,10 +34,53 @@ Pathfinder::Pathfinder(const PathfindingGrid& grid) : grid_(grid) {}
 
 bool Pathfinder::clear_segment(f32 start_x, f32 start_z, f32 goal_x, f32 goal_z,
                                const std::string& layer, f32 draft, bool amphibious) const {
+    if (!std::isfinite(start_x) || !std::isfinite(start_z) || !std::isfinite(goal_x) ||
+        !std::isfinite(goal_z) || grid_.grid_width() == 0 || grid_.grid_height() == 0)
+        return false;
     u32 sx = 0, sz = 0, gx = 0, gz = 0;
     grid_.world_to_grid(start_x, start_z, sx, sz);
     grid_.world_to_grid(goal_x, goal_z, gx, gz);
-    return has_line_of_sight(sx, sz, gx, gz, layer, draft, amphibious);
+    const auto mover = PathfindingGrid::classify(layer, draft, amphibious);
+    const auto open_at = [&](i64 x, i64 z) {
+        return x >= 0 && z >= 0 && x < grid_.grid_width() && z < grid_.grid_height() &&
+               grid_.passable_at(static_cast<u32>(z) * grid_.grid_width() + static_cast<u32>(x),
+                                 mover);
+    };
+    if (!open_at(sx, sz)) return false;
+    if (sx == gx && sz == gz) return true;
+
+    // The physical segment, not the line between endpoint cell centres.
+    // Double products compare boundary crossing distances without an
+    // epsilon or accumulated DDA steps; exact corner crossings check both
+    // side cells, as A* does. Clamp outside endpoints as world_to_grid does.
+    const f64 size = grid_.cell_size();
+    const f64 ax = std::clamp(f64{start_x}, 0.0, grid_.grid_width() * size);
+    const f64 az = std::clamp(f64{start_z}, 0.0, grid_.grid_height() * size);
+    const f64 bx = std::clamp(f64{goal_x}, 0.0, grid_.grid_width() * size);
+    const f64 bz = std::clamp(f64{goal_z}, 0.0, grid_.grid_height() * size);
+    const f64 dx = std::abs(bx - ax), dz = std::abs(bz - az);
+    const i64 step_x = gx > sx ? 1 : -1;
+    const i64 step_z = gz > sz ? 1 : -1;
+    i64 x = sx, z = sz;
+    while (x != gx || z != gz) {
+        const f64 edge_x = static_cast<f64>(x + (step_x > 0 ? 1 : 0)) * size;
+        const f64 edge_z = static_cast<f64>(z + (step_z > 0 ? 1 : 0)) * size;
+        const f64 next_x =
+            x == gx ? std::numeric_limits<f64>::infinity() : std::abs(edge_x - ax) * dz;
+        const f64 next_z =
+            z == gz ? std::numeric_limits<f64>::infinity() : std::abs(edge_z - az) * dx;
+        if (next_x == next_z) {
+            if (!open_at(x + step_x, z) || !open_at(x, z + step_z)) return false;
+            x += step_x;
+            z += step_z;
+        } else if (next_x < next_z) {
+            x += step_x;
+        } else {
+            z += step_z;
+        }
+        if (!open_at(x, z)) return false;
+    }
+    return true;
 }
 
 PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
@@ -63,7 +107,7 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
     // open ground must not start eight units at a time while waiting for
     // the shared A* budget. Use the same complete cell/corner checks as
     // smoothing; a footprint escape or obstructed route still searches.
-    if (has_line_of_sight(sx, sz, gx, gz, layer, draft, amphibious)) {
+    if (clear_segment(start_x, start_z, goal_x, goal_z, layer, draft, amphibious)) {
         f32 wx = 0, wz = 0;
         grid_.grid_to_world(sx, sz, wx, wz);
         result.found = true;
@@ -146,8 +190,23 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
     // Replace last waypoint with exact goal position (a partial path ends at
     // the reachable cell, not at the unreachable goal)
     if (!result.waypoints.empty() && !result.partial) {
-        result.waypoints.back().x = goal_x;
-        result.waypoints.back().z = goal_z;
+        bool retain_centre = false;
+        if (result.waypoints.size() > 1) {
+            const auto& before = result.waypoints[result.waypoints.size() - 2];
+            u32 px = 0, pz = 0;
+            grid_.world_to_grid(before.x, before.z, px, pz);
+            retain_centre =
+                grid_.is_passable_for(px, pz, layer, draft, amphibious) &&
+                !clear_segment(before.x, before.z, goal_x, goal_z, layer, draft, amphibious);
+        }
+        if (retain_centre) {
+            // The centre-to-centre route is clear, but its final corner
+            // cannot be replaced by an arbitrary point in the goal cell.
+            result.waypoints.push_back({goal_x, 0, goal_z});
+        } else {
+            result.waypoints.back().x = goal_x;
+            result.waypoints.back().z = goal_z;
+        }
     }
 
     return result;

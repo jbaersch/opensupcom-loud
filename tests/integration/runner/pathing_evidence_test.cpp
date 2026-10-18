@@ -5,6 +5,7 @@
 #include "lua/lua_state.hpp"
 #include "render_probe.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -180,9 +181,7 @@ void test_choke(TestContext& ctx) {
     )");
     run_sampled(ctx, t, 1500, "__osc_choke_sample");
 
-    lua_check(ctx, t,
-              "Test 1: the crowd crosses by the gap: with Moho's pathing none through the "
-              "wall, with the grid's every one across",
+    lua_check(ctx, t, "Test 1: the crowd crosses without passing through wall cells",
               R"(
         local through, round, stranded, clipped, last, problems = 0, 0, 0, 0, 0, ''
         for i, u in __osc_crowd do
@@ -208,21 +207,36 @@ void test_choke(TestContext& ctx) {
         LOG(string.format('choke-test: %d through the gap, %d round the wall, %d through wall cells, '
                           .. '%d stopped short of it; the last in by tick %d',
                           through, round, clipped, stranded, last))
+        if clipped > 0 then error(clipped .. ' went through wall cells') end
         if __osc_moho_pathing then
             -- Moho's drive moves a unit only where its footprint fits, and
             -- bounces one back from ground it won't (CalcMoveCommon). Its
             -- navigator looks down the way every 7 ticks and asks again
             -- before the wall, so the crowd makes for the gap, not the
             -- wall's face. In retail FA all 24 get across.
-            if clipped > 0 then error(clipped .. ' went through wall cells') end
             if stranded > 0 then error(stranded .. ' stopped short of the gap') end
         else
-            -- The grid's pathing gets each one across; its smoothed paths
-            -- cut the wall's corners (a known gap of the default pathing).
+            -- The default navigator also retains clear physical segments,
+            -- including off-centre endpoints and temporary sidesteps.
             if stranded > 0 then error(stranded .. ' never crossed') end
         end
         if problems ~= '' then error(problems) end
     )");
+    if (t.fail != 0) {
+        ctx.sim.entity_registry().for_each_unit([](sim::Entity& entity) {
+            const auto& unit = static_cast<const sim::Unit&>(entity);
+            if (unit.blueprint_id() != "uel0201") return;
+            const auto& nav = unit.navigator();
+            const auto p = unit.position();
+            const auto goal = nav.goal();
+            const auto* waypoint = nav.waypoint();
+            spdlog::info("choke-test unit={} position=({}, {}) goal=({}, {}) waypoint=({}, {}) "
+                         "status={} holding={} speed={} orders={}",
+                         unit.entity_id(), p.x, p.z, goal.x, goal.z, waypoint ? waypoint->x : 0,
+                         waypoint ? waypoint->z : 0, static_cast<int>(nav.status()), nav.holding(),
+                         unit.ground_speed(), unit.command_queue().size());
+        });
+    }
     lua_check(ctx, t, "Test 2: the crowd has settled round the point", R"(
         for i, u in __osc_crowd do
             if u:IsMoving() then error('Striker ' .. i .. ' is still moving') end

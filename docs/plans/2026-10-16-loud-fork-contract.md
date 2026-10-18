@@ -68,6 +68,19 @@ segments, retains corners until their geometry is passed and permits retries
 after a relevant grid change. This is the existing default navigator, not the
 optional upstream Moho-pathing implementation.
 
+World-segment checks retain the endpoints' offsets inside their grid cells;
+a clear centre-to-centre line is not sufficient. A nearby corner is kept until
+the actual continuation is clear. A completed temporary sidestep whose return
+leg is obstructed requests a new route, while a unit still inside a building's
+footprint retains its existing escape-route corner passing. An exact goal keeps
+the final cell centre as an extra corner if replacing it would cross an obstacle.
+Synthetic offset, sidestep and footprint-exit cases cover these integration
+regressions. The retail choke fixture also rejects wall-cell crossings by the
+default navigator; its original success criterion only required all units to
+get across. These rules do not change the optional Moho navigator or add saved
+navigation fields.
+
+
 Each Pathfinder owns an LRU of at most 128 raw integer-cell routes, each at most
 4,096 coordinate pairs (4 MiB coordinate payload bound). Keys include exact
 start/goal cells, resolved movement class, effective water-draft float bits and
