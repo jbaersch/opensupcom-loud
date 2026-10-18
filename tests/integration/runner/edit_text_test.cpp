@@ -1,6 +1,7 @@
 #include "edit_text_test.hpp"
 
 #include "app/app.hpp"
+#include "app/mods_flow_test.hpp"
 #include "app/window_commands.hpp"
 #include "core/image.hpp"
 #include "core/test_status.hpp"
@@ -92,13 +93,18 @@ void run_edit_text_test(app::Engine& e) {
         !res) {
         osc::test_status::fail("[FAIL] edit-text-test Lua: {}", res.error().message);
     }
-    if (auto* label = find_control(
-            e, [](const ui::UIControl& c) { return c.text_content() == "Create" && c.parent(); })) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, label->parent()->lua_table_ref());
+    if (auto create =
+            app::find_control(L, e.ui_registry, app::labelled("<LOC PROFILE_0004>Create"))) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, create->control->lua_table_ref());
         lua_setglobal(L, "__edit_text_create");
         if (auto res = e.ui_lua_state.do_string("__edit_text_create:OnClick()"); !res) {
             osc::test_status::fail("[FAIL] edit-text-test Lua: {}", res.error().message);
         }
+    } else {
+        osc::test_status::fail(
+            "[FAIL] edit-text-test: the profile dialog's Create button not found");
+        r.shutdown();
+        return;
     }
     auto* edit = find_control(e, [](const ui::UIControl& c) {
         return c.control_type() == ui::UIControl::ControlType::Edit && c.has_keyboard_focus();

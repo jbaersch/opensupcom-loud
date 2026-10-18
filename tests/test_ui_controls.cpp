@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "app/mods_flow_test.hpp"
+#include "app/ui_clicks.hpp"
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
@@ -553,6 +555,75 @@ struct InputFixture {
 };
 
 } // namespace
+
+TEST_CASE("UI test clicks resolve the active LOC and still wait for a reachable label",
+          "[ui][lua][input][ui_selectors]") {
+    InputFixture f;
+    lua_State* L = f.lua.raw();
+    f.run(R"(
+        translation = 'Test action'
+        function LOC(token)
+            if token == '<LOC test_action>' then return translation end
+            if token == '<LOC missing_key>Fallback action' then return 'Fallback action' end
+            return token
+        end
+        button = box('button', GetFrame(0), 20, 10, 120, 50, 1)
+        button.eats = true
+        button.label = { GetText = function() return translation end }
+        for _, field in {'Left', 'Top', 'Width', 'Height'} do
+            rawset(button, field, setmetatable({ button[field] }, {
+                __call = function(value) return value[1] end,
+            }))
+        end
+    )");
+    const auto find = [&](const char* label) {
+        return osc::app::find_control(L, f.registry, osc::app::labelled(label));
+    };
+    const int top = lua_gettop(L);
+    REQUIRE(find("Test action"));
+    REQUIRE(find("<LOC test_action>"));
+    CHECK(find("<LOC test_action>")->control == control_of(L, "button"));
+    CHECK(find("<LOC test_action>")->x == 70);
+    CHECK(find("<LOC test_action>")->y == 30);
+    CHECK_FALSE(find("missing label"));
+
+    // A synthetic second language: the currently installed Lua LOC wins.
+    f.run("translation = 'Prüfaktion'");
+    CHECK_FALSE(find("Test action"));
+    REQUIRE(find("Prüfaktion"));
+    REQUIRE(find("<LOC test_action>"));
+    CHECK(lua_gettop(L) == top);
+
+    // LOC also owns fallback handling: it must receive the complete token.
+    f.run("translation = 'Fallback action'");
+    REQUIRE(find("<LOC missing_key>Fallback action"));
+    CHECK_FALSE(find("<LOC missing_key>"));
+    f.run("translation = 'Prüfaktion'");
+
+    osc::app::UiClicks clicks({{"<LOC test_action>"}, {"", 200, 100}});
+    f.run("cover = box('cover', GetFrame(0), 0, 0, 140, 60, 2) cover.eats = true");
+    clicks.frame(f.lua, f.dispatch, f.registry);
+    f.deliver();
+    CHECK_FALSE(clicks.done());
+    CHECK(clicks.never_clicked().find("<LOC test_action>") != std::string::npos);
+    CHECK(f.check("whos('ButtonPress') == ''"));
+
+    f.run("cover:Destroy() button:Hide()");
+    CHECK_FALSE(find("<LOC test_action>"));
+    clicks.frame(f.lua, f.dispatch, f.registry);
+    CHECK_FALSE(clicks.done());
+    f.run("button:Show()");
+    clicks.frame(f.lua, f.dispatch, f.registry);
+    f.deliver();
+    CHECK(f.check("whos('ButtonPress') == 'button' and whos('ButtonRelease') == 'button'"));
+    CHECK_FALSE(clicks.done());
+    clicks.frame(f.lua, f.dispatch, f.registry);
+    CHECK_FALSE(clicks.done());
+    clicks.frame(f.lua, f.dispatch, f.registry);
+    CHECK(clicks.done());
+    CHECK(f.dispatch.mouse_x() == 200);
+    CHECK(f.dispatch.mouse_y() == 100);
+}
 
 TEST_CASE("UI events reach Lua with Moho's codes and modifiers", "[ui][lua][input]") {
     InputFixture f;

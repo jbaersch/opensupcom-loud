@@ -1,6 +1,7 @@
 #include "combo_click_test.hpp"
 
 #include "app/app.hpp"
+#include "app/mods_flow_test.hpp"
 #include "app/window_commands.hpp"
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
@@ -90,13 +91,10 @@ void run_combo_click_test(app::Engine& e) {
     }
     frames();
     const ui::UIControl* combo = nullptr;
-    const ui::UIControl* cancel = nullptr;
+    const auto cancel = app::find_control(L, e.ui_registry, app::labelled("<LOC _Cancel>"));
     for (const auto& p : e.ui_registry.all()) {
         if (!p || p->destroyed() || p->lua_table_ref() < 0) {
             continue;
-        }
-        if (p->text_content() == "Cancel" && p->parent()) {
-            cancel = p->parent();
         }
         lua_rawgeti(L, LUA_REGISTRYINDEX, p->lua_table_ref());
         lua_getglobal(L, "__osc_cc_combo");
@@ -107,7 +105,7 @@ void run_combo_click_test(app::Engine& e) {
     }
     if (!combo || !cancel) {
         osc::test_status::fail("[FAIL] combo-click-test: the options dialog's combo {}, Cancel {}",
-                               combo != nullptr, cancel != nullptr);
+                               combo != nullptr, cancel.has_value());
         r.shutdown();
         return;
     }
@@ -122,7 +120,7 @@ void run_combo_click_test(app::Engine& e) {
                         "({}), and leaves the dialog open",
                         opened, closed));
 
-    const Box b = box_of(L, cancel->lua_table_ref());
+    const Box b = box_of(L, cancel->control->lua_table_ref());
     click(b.left + 4, (b.top + b.bottom) / 2);
     t.check(lua_true(e.ui_lua_state, "__osc_cc_closed"),
             "Test 2: Cancel then takes its click, and closes the dialog");

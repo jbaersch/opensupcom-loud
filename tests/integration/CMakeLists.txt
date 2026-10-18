@@ -547,7 +547,7 @@ set_tests_properties(data.golden.scmp009_game_ui_minimap PROPERTIES
 # Retail's skirmish lobby, opened from the main menu (a capture's profile has
 # already seen the tutorial prompt)
 add_test(NAME data.golden.skirmish_lobby
-         COMMAND opensupcom --click Skirmish --golden skirmish_lobby
+         COMMAND opensupcom --click "<LOC _Skirmish>" --golden skirmish_lobby
                  --screenshot-frame 600 --golden-tolerance 0.001)
 set_tests_properties(data.golden.skirmish_lobby PROPERTIES
     LABELS "data;gate;golden"
@@ -557,7 +557,7 @@ set_tests_properties(data.golden.skirmish_lobby PROPERTIES
 # The lobby's Game Options dialog: its maps and map info are ItemLists, rows
 # spaced as retail's
 add_test(NAME data.golden.map_select
-         COMMAND opensupcom --click Skirmish --click "Game Options" --golden map_select
+         COMMAND opensupcom --click "<LOC _Skirmish>" --click "<LOC map_sel_0000>Game Options" --golden map_select
                  --screenshot-frame 600 --golden-tolerance 0.001)
 set_tests_properties(data.golden.map_select PROPERTIES
     LABELS "data;gate;golden"
@@ -567,7 +567,7 @@ set_tests_properties(data.golden.map_select PROPERTIES
 # The map list paged by a click on its scrollbar's track, below the thumb:
 # a page, as far as its last rows
 add_test(NAME data.golden.map_select_paged
-         COMMAND opensupcom --click Skirmish --click "Game Options" --click-at 945,600
+         COMMAND opensupcom --click "<LOC _Skirmish>" --click "<LOC map_sel_0000>Game Options" --click-at 945,600
                  --golden map_select_paged --screenshot-frame 600 --golden-tolerance 0.001)
 set_tests_properties(data.golden.map_select_paged PROPERTIES
     LABELS "data;gate;golden"
