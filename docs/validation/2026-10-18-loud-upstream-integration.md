@@ -1,6 +1,6 @@
 # Pinned upstream integration: initial technical acceptance
 
-This is the integration candidate on `codex/loud-upstream-integration`, based on
+This is the integration candidate on `codex/loud-upstream-integration-publish`, based on
 LOUD head `44f04de3befd6422c5a874719ae1a19000399a26` and upstream target
 `d98ad20318aed5c44ae861e59a0358d84ed62b99`. Their merge base is
 `a799c964e25708b5512f16aee93845dcaca01dc8`. The preserved, previously accepted
@@ -8,8 +8,10 @@ LOUD executable and its launcher remain separate. Long-duration and large-load
 acceptance of this candidate is still pending; this record is not adoption into
 the maintained gameplay line.
 
-The engine/test head checked below is
-`65ff55952084d82fc9184d9e8f2884f229b32c0b` (the following documentation changes do not change engine sources).
+The initial engine/test results below were recorded before the test-only module
+split, with engine sources identical to `307f2a01`. The current source head is
+`84ab96ae99a549bec23f14fe2004dc108dc105c2`; its additional platoon-lifetime fix
+is described separately below and still requires the broader acceptance rerun.
 No original executable was run. Original installations were read-only for the
 original-data acceptance runs; writable profiles, recordings and captures were
 isolated. Game content and raw evidence remain outside Git.
@@ -79,6 +81,25 @@ scripts or balance data were changed.
 Two UI startup diagnostics came from an inherited Wayland socket name beneath a
 long private runtime path. Later X11 test runs explicitly unset that child-process
 variable. The X11/RANDR failures above are recorded separately.
+
+## Subsequent platoon lifetime correction
+
+A normal LOUD run exposed a missing platoon position after its final unit called
+`Destroy` earlier in the same beat. World lookups removed the unit immediately,
+although the unit and its script handle remained owned by the deletion queue.
+The behavioral reference is [faf-re Unit destruction and platoon membership](https://github.com/Draiget/faf-re/blob/da3926cf0ce39c3124f9748e228a44362d72bf1d/src/sdk/moho/unit/core/Unit.cpp), together with its `CPlatoon::GetPlatoonPosition` binder: membership
+lasts until the unit is actually freed. The independently implemented fix retains
+queued members for platoon-unit and centroid queries, while live world lookups
+still remove them immediately. No LOUD fallback or failure filter was added.
+
+The new synthetic case fails before the fix and passes afterward, including the
+empty/nil result after collection. The Werror build and five platoon/weapon
+lifetime cases (60 assertions) pass. Broader validation of this fix is pending.
+
+The first long-run fixture also used a player nickname that prevented one LOUD
+AI from starting its plan with the active custom-AI mods. Those runs are diagnostic
+only. The corrected fixture uses LOUD AI nicknames and checks that both armies
+produce units. It does not alter the installed game scripts.
 
 ## Identity and remaining acceptance
 

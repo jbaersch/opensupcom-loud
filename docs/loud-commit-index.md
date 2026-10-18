@@ -65,11 +65,15 @@ for the exact tested source head and limits.
 
 | Commit | Change |
 | --- | --- |
-| `b2852e19` | Merge the pinned upstream, reconcile construction/flight/ground motion and scaled icon rendering. |
-| `b6d4de67` | Share the authoritative native cheat option with UI and queued callbacks. |
-| `72c351a3` | Adopt the separately reviewed localized retail-selector tests from `69e6ab4f`. |
-| `c82d9a59` | Compose muzzle and shared aiming with the animated barrel frame. |
-| `7cab78f0` | Avoid restarting weapon initialization through a destroyed unit's retained handle. |
-| `95436317` | Restore mobile-build footprint snapping at preparation. |
-| `90c9c14b` | Preserve clear physical route segments, sidestep returns and footprint escape. |
-| `65ff5595` | Give synthetic material plates valid unarmed fixtures and check actual projectile-table identity. |
+| `40525af2` | Move the existing UI test block verbatim into a separate runner module. |
+| `5be1a08d` | Merge the pinned upstream, reconcile construction/flight/ground motion and scaled icon rendering. |
+| `feea75ae` | Share the authoritative native cheat option with UI and queued callbacks. |
+| `353c3d3c` | Adopt the separately reviewed localized retail-selector tests from `69e6ab4f`. |
+| `2c7edd11` | Compose muzzle and shared aiming with the animated barrel frame. |
+| `56c44e61` | Avoid restarting weapon initialization through a destroyed unit's retained handle. |
+| `8ce3a271` | Restore mobile-build footprint snapping at preparation. |
+| `d1f44f7c` | Preserve clear physical route segments, sidestep returns and footprint escape. |
+| `307f2a01` | Give synthetic material plates valid unarmed fixtures and check actual projectile-table identity. |
+
+- `84ab96ae` — retain platoon membership through queued unit deletion; a synthetic
+  RED/GREEN case checks membership and position before and after the queue drains.
