@@ -356,3 +356,24 @@ TEST_CASE("A script may reject joining another army's build without removing its
     CHECK(site->fraction_complete() - before == Catch::Approx(10.0f / 1000.0f * 0.1f));
     CHECK(world.sim.get_army(0)->economy().mass.requested == 0);
 }
+
+TEST_CASE("A mobile build snaps an odd footprint before preparing the shared site",
+          "[build][shared-site]") {
+    SharedBuildWorld world;
+    REQUIRE(world.lua
+                .do_string(R"(
+        __blueprints.test_site.Footprint.SizeX = 1
+        __blueprints.test_site.Footprint.SizeZ = 1
+        __blueprints.test_site.Physics.SkirtSizeX = 1
+        __blueprints.test_site.Physics.SkirtSizeZ = 1
+    )")
+                .ok());
+    auto* builder = world.builder(10, 12);
+    world.build({builder});
+    world.tick(8);
+    REQUIRE(world.sites().size() == 1);
+    CHECK(world.sites()[0]->position().x == 20.5f);
+    CHECK(world.sites()[0]->position().z == 20.5f);
+    REQUIRE_FALSE(builder->command_queue().empty());
+    CHECK(builder->command_queue().front().target_pos.x == 20.5f);
+}

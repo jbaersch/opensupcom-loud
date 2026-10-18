@@ -776,6 +776,8 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             // The site, as the task takes it: snapped to the footprint's
             // cells (Moho's CUnitMobileBuildTask, as made). An order from
             // the UI comes snapped already; a script's may not.
+            const auto [fx, fz] = blueprint_footprint_cells(L, cmd.blueprint_id);
+            snap_structure_center(cmd.target_pos.x, cmd.target_pos.z, fx, fz);
             const BuildSiteProp site =
                 find_build_site_prop(L, registry, *this, cmd.blueprint_id, cmd.target_pos);
             if (destroyed() || !in_registry()) {
