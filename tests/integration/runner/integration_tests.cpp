@@ -5595,8 +5595,10 @@ void test_massstub2(TestContext& ctx) {
             local w = u:GetWeapon(1)
             if not w then error('no weapon') end
             local bp = w:GetProjectileBlueprint()
-            if type(bp) ~= 'string' and bp ~= nil then
-                error('GetProjectileBlueprint expected string or nil, got ' .. type(bp))
+            local id = w:GetBlueprint().ProjectileId
+            local expected = id and __blueprints[string.lower(id)]
+            if bp ~= expected or (bp ~= nil and type(bp) ~= 'table') then
+                error('GetProjectileBlueprint must return the shared projectile blueprint table')
             end
             w:SetTargetGround(true)
             -- SetFireControl/IsFireControl name an aim controller by label.

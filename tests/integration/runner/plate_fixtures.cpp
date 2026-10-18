@@ -213,7 +213,13 @@ void stand_plate(TestContext& ctx, const std::string& root, const std::string& b
         "bp.Display = bp.Display or {{}}\n"
         "bp.Display.MeshBlueprint = mesh\n"
         "bp.Display.UniformScale = 1\n"
+        // The invented plate has only its own bones, not the unit's weapon
+        // turrets. Instantiate an unarmed rendering fixture, then restore
+        // the source blueprint for subsequent real units.
+        "local originalWeapons = bp.Weapon\n"
+        "bp.Weapon = {{}}\n"
         "__osc_last_plate = {6}\n"
+        "bp.Weapon = originalWeapons\n"
         "if __osc_last_plate.BuildPointSlider then\n"
         "  __osc_last_plate.BuildPointSlider:Destroy()\n"
         "end\n"
