@@ -91,7 +91,8 @@ void main() {
 
 // TerrainPS1: the frame's colour less saturate(16 (c - mean of the eight
 // neighbours' alpha)), alpha 0; neighbours summed in Moho's order (bl, l,
-// tl, t, ur, r, br, b), POINT and CLAMP.
+// tl, t, ur, r, br, b), POINT and CLAMP. Clamped at 0 as Moho's 8-bit head
+// clamps it, which the scene's float target wouldn't.
 const char* kEdgeFrag = R"(#version 450
 layout(set = 0, binding = 0) uniform sampler2D frame;
 layout(location = 0) out vec4 color;
@@ -106,7 +107,7 @@ void main() {
                 alpha_at(p + ivec2(1, 1)) + alpha_at(p + ivec2(1, 0)) +
                 alpha_at(p + ivec2(1, -1)) + alpha_at(p + ivec2(0, -1));
     float topo = clamp(16.0 * (c.a - 0.125 * sum), 0.0, 1.0);
-    color = vec4(c.rgb - vec3(topo), 0.0);
+    color = vec4(clamp(c.rgb - vec3(topo), 0.0, 1.0), 0.0);
 }
 )";
 
@@ -248,7 +249,7 @@ void write_samplers(VkDevice device, VkDescriptorSet set, VkSampler sampler,
 } // namespace
 
 void CartographicRenderer::init(VkDevice device, VmaAllocator allocator, VkFormat depth_format,
-                                VkDescriptorSetLayout ui_layout) {
+                                VkDescriptorSetLayout ui_layout, VkRenderPass scene_pass) {
     device_ = device;
     allocator_ = allocator;
     depth_format_ = depth_format;
@@ -266,26 +267,28 @@ void CartographicRenderer::init(VkDevice device, VmaAllocator allocator, VkForma
     vkCreateSampler(device, &sampler, nullptr, &point_);
 
     frame_pass_ = make_pass(device, depth_format, true);
-    output_pass_ = make_pass(device, depth_format, false);
+    output_pass_ = make_pass(device, depth_format, true);
     lookup_layout_ = sampler_layout(device, 3);
     frame_layout_ = sampler_layout(device, 1);
 
-    // The lookups' set, then each frame in flight's stage-1 input and UI set
+    // The lookups' set, then each frame in flight's stage-1 input and UI
+    // set, and the main view's stage-1 input
     const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                    3 + 2 * FRAMES_IN_FLIGHT};
+                                    3 + 3 * FRAMES_IN_FLIGHT};
     VkDescriptorPoolCreateInfo pool_ci{};
     pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pool_ci.maxSets = 1 + 2 * FRAMES_IN_FLIGHT;
+    pool_ci.maxSets = 1 + 3 * FRAMES_IN_FLIGHT;
     pool_ci.poolSizeCount = 1;
     pool_ci.pPoolSizes = &size;
     vkCreateDescriptorPool(device, &pool_ci, nullptr, &pool_);
-    std::array<VkDescriptorSetLayout, 1 + 2 * FRAMES_IN_FLIGHT> layouts{};
+    std::array<VkDescriptorSetLayout, 1 + 3 * FRAMES_IN_FLIGHT> layouts{};
     layouts[0] = lookup_layout_;
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         layouts[1 + i] = frame_layout_;
         layouts[1 + FRAMES_IN_FLIGHT + i] = ui_layout;
+        layouts[1 + 2 * FRAMES_IN_FLIGHT + i] = frame_layout_;
     }
-    std::array<VkDescriptorSet, 1 + 2 * FRAMES_IN_FLIGHT> sets{};
+    std::array<VkDescriptorSet, 1 + 3 * FRAMES_IN_FLIGHT> sets{};
     VkDescriptorSetAllocateInfo alloc{};
     alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     alloc.descriptorPool = pool_;
@@ -296,6 +299,7 @@ void CartographicRenderer::init(VkDevice device, VmaAllocator allocator, VkForma
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         frame_sets_[i] = sets[1 + i];
         ui_sets_[i] = sets[1 + FRAMES_IN_FLIGHT + i];
+        main_frame_sets_[i] = sets[1 + 2 * FRAMES_IN_FLIGHT + i];
     }
 
     const VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
@@ -397,9 +401,16 @@ void CartographicRenderer::init(VkDevice device, VmaAllocator allocator, VkForma
     depth.depthCompareOp = VK_COMPARE_OP_ALWAYS;
     build(terrain_vert, terrain_frag, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, &depth, terrain_layout_,
           frame_pass_, terrain_pipeline_);
-    // Terrain_Stage1: Depth_Disable (its pass has none)
-    build(edge_vert, edge_frag, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, nullptr, edge_layout_,
+    // Terrain_Stage1: Depth_Disable, over the output's depth (which the
+    // meshes test after it); and into the scene, for a cartographic main
+    // view, over the scene's
+    VkPipelineDepthStencilStateCreateInfo no_depth{};
+    no_depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    build(edge_vert, edge_frag, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, &no_depth, edge_layout_,
           output_pass_, edge_pipeline_);
+    if (scene_pass)
+        build(edge_vert, edge_frag, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, &no_depth, edge_layout_,
+              scene_pass, scene_edge_pipeline_);
     for (VkShaderModule m : modules) vkDestroyShaderModule(device, m, nullptr);
 }
 
@@ -432,12 +443,14 @@ void CartographicRenderer::build(const map::Terrain& terrain, TextureCache& text
     }
     write_samplers(device_, lookup_set_, point_,
                    {elev->image.view, hypso->image.view, topo->image.view});
+    hypsometric_ds_ = hypso->descriptor_set;
     built_ = true;
 }
 
-bool CartographicRenderer::ensure_target(u32 fi, u32 width, u32 height) {
-    Target& t = targets_[fi];
-    if (t.width == width && t.height == height && t.frame_fb && t.output_fb) return true;
+bool CartographicRenderer::ensure_target(Target& t, u32 width, u32 height, bool with_output,
+                                         VkDescriptorSet frame_set, VkDescriptorSet ui_set) {
+    if (t.width == width && t.height == height && t.frame_fb && (t.output_fb || !with_output))
+        return true;
     vkDeviceWaitIdle(device_);
     destroy_target(t);
     constexpr VkImageUsageFlags kColor = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
@@ -445,8 +458,9 @@ bool CartographicRenderer::ensure_target(u32 fi, u32 width, u32 height) {
                                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     t.frame = make_image(device_, allocator_, kTargetFormat, width, height, kColor,
                          VK_IMAGE_ASPECT_COLOR_BIT);
-    t.output = make_image(device_, allocator_, kTargetFormat, width, height, kColor,
-                          VK_IMAGE_ASPECT_COLOR_BIT);
+    if (with_output)
+        t.output = make_image(device_, allocator_, kTargetFormat, width, height, kColor,
+                              VK_IMAGE_ASPECT_COLOR_BIT);
     // The view takes the stencil too where the format has one, as the
     // frame's depth does
     const VkImageAspectFlags depth_aspect =
@@ -468,7 +482,7 @@ bool CartographicRenderer::ensure_target(u32 fi, u32 width, u32 height) {
         if (vkCreateImageView(device_, &view, nullptr, &t.ui_view) != VK_SUCCESS)
             t.ui_view = VK_NULL_HANDLE;
     }
-    if (!t.frame.view || !t.output.view || !t.ui_view || !t.depth.view) {
+    if (!t.frame.view || !t.depth.view || (with_output && (!t.output.view || !t.ui_view))) {
         destroy_target(t);
         return false;
     }
@@ -482,16 +496,20 @@ bool CartographicRenderer::ensure_target(u32 fi, u32 width, u32 height) {
     fb.attachmentCount = 2;
     fb.pAttachments = frame_views.data();
     vkCreateFramebuffer(device_, &fb, nullptr, &t.frame_fb);
-    fb.renderPass = output_pass_;
-    fb.attachmentCount = 1;
-    fb.pAttachments = &t.output.view;
-    vkCreateFramebuffer(device_, &fb, nullptr, &t.output_fb);
-    if (!t.frame_fb || !t.output_fb) {
+    if (with_output) {
+        // The frame's depth again, cleared: Stage 0 is done with it
+        const std::array<VkImageView, 2> output_views = {t.output.view, t.depth.view};
+        fb.renderPass = output_pass_;
+        fb.attachmentCount = 2;
+        fb.pAttachments = output_views.data();
+        vkCreateFramebuffer(device_, &fb, nullptr, &t.output_fb);
+    }
+    if (!t.frame_fb || (with_output && !t.output_fb)) {
         destroy_target(t);
         return false;
     }
-    write_samplers(device_, frame_sets_[fi], point_, {t.frame.view});
-    write_samplers(device_, ui_sets_[fi], point_, {t.ui_view});
+    write_samplers(device_, frame_set, point_, {t.frame.view});
+    if (with_output) write_samplers(device_, ui_set, point_, {t.ui_view});
     t.width = width;
     t.height = height;
     return true;
@@ -499,17 +517,33 @@ bool CartographicRenderer::ensure_target(u32 fi, u32 width, u32 height) {
 
 bool CartographicRenderer::prepare(u32 fi, u32 width, u32 height) {
     if (!ready() || fi >= FRAMES_IN_FLIGHT || width == 0 || height == 0) return false;
-    return ensure_target(fi, width, height);
+    return ensure_target(targets_[fi], width, height, true, frame_sets_[fi], ui_sets_[fi]);
 }
 
-void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view) {
-    if (!prepare(fi, view.width, view.height)) return;
-    const Target& t = targets_[fi];
+std::array<f32, 16> CartographicRenderer::view_proj(const View& view) const {
+    // Depths over the heights and the quad, which lies at the water's
+    // surface: a map flooded over its highest ground, or with its water
+    // under its lowest, must not clip it away; nor the overlays' volumes
+    const f32 surface = static_cast<f32>(surface_word_) / 128.0f;
+    return cartographic_view_proj(view.x0, view.z0, view.x1, view.z1,
+                                  std::min({params_.elev_min, surface, volume_bottom_}) - 1.0f,
+                                  std::max({params_.elev_max, surface, volume_top_}) + 1.0f);
+}
+
+std::array<f32, 16> CartographicRenderer::mesh_view_proj(const View& view) const {
+    const f32 surface = static_cast<f32>(surface_word_) / 128.0f;
+    return cartographic_view_proj(view.x0, view.z0, view.x1, view.z1,
+                                  std::min({params_.elev_min, surface, volume_bottom_}) - 1.0f,
+                                  std::max({params_.elev_max, surface, volume_top_}) + 1.0f +
+                                      kMeshHeadroom);
+}
+
+void CartographicRenderer::record_stage0(VkCommandBuffer cmd, const Target& t, const f32* view_proj,
+                                         const Overlays& overlays) const {
     const VkViewport viewport{0.0f, 0.0f, static_cast<f32>(t.width), static_cast<f32>(t.height),
                               0.0f, 1.0f};
     const VkRect2D scissor{{0, 0}, {t.width, t.height}};
-
-    // Stage 0, into the frame: cleared to opaque black, depth 1, stencil 0
+    // Into the frame: cleared to opaque black, depth 1, stencil 0
     std::array<VkClearValue, 2> clears{};
     clears[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
     clears[1].depthStencil = {1.0f, 0};
@@ -524,14 +558,7 @@ void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view)
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
     TerrainPush push{};
-    // Depths over the heights and the quad, which lies at the water's
-    // surface: a map flooded over its highest ground, or with its water
-    // under its lowest, must not clip it away
-    const f32 surface = static_cast<f32>(surface_word_) / 128.0f;
-    const auto vp = cartographic_view_proj(view.x0, view.z0, view.x1, view.z1,
-                                           std::min(params_.elev_min, surface) - 1.0f,
-                                           std::max(params_.elev_max, surface) + 1.0f);
-    std::memcpy(push.view_proj, vp.data(), sizeof(push.view_proj));
+    std::memcpy(push.view_proj, view_proj, sizeof(push.view_proj));
     std::memcpy(push.terrain_size_coeff, params_.terrain_size_coeff.data(),
                 sizeof(push.terrain_size_coeff));
     push.quad[0] = static_cast<f32>(span_x_);
@@ -545,12 +572,33 @@ void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view)
                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
                         &push);
     vkc::draw(cmd, 4, 1, 0, 0);
+    // The overlays, on the quad's depth
+    if (overlays) overlays(cmd, view_proj, t.width, t.height);
     vkCmdEndRenderPass(cmd);
+}
+
+void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view,
+                                  const Overlays& overlays, const Meshes& meshes) {
+    if (!prepare(fi, view.width, view.height)) return;
+    const Target& t = targets_[fi];
+    const auto vp = view_proj(view);
+    record_stage0(cmd, t, vp.data(), overlays);
 
     // Stage 1, into the output: the contour lines
+    const VkViewport viewport{0.0f, 0.0f, static_cast<f32>(t.width), static_cast<f32>(t.height),
+                              0.0f, 1.0f};
+    const VkRect2D scissor{{0, 0}, {t.width, t.height}};
+    // Black, and a depth of 1 for the meshes (Moho clears the head's)
+    std::array<VkClearValue, 2> clears{};
+    clears[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    clears[1].depthStencil = {1.0f, 0};
+    VkRenderPassBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     begin.renderPass = output_pass_;
     begin.framebuffer = t.output_fb;
-    begin.clearValueCount = 1;
+    begin.renderArea = scissor;
+    begin.clearValueCount = static_cast<u32>(clears.size());
+    begin.pClearValues = clears.data();
     vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
@@ -558,7 +606,30 @@ void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view)
     vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, edge_layout_, 0, 1,
                               &frame_sets_[fi], 0, nullptr);
     vkc::draw(cmd, 3, 1, 0, 0);
+    // RenderMeshes, after Stage 1
+    if (meshes) {
+        const auto mesh_vp = mesh_view_proj(view);
+        meshes(cmd, mesh_vp.data());
+    }
     vkCmdEndRenderPass(cmd);
+}
+
+bool CartographicRenderer::record_main_frame(VkCommandBuffer cmd, u32 fi, u32 width, u32 height,
+                                             const f32* view_proj, const Overlays& overlays) {
+    if (!ready() || !scene_edge_pipeline_ || fi >= FRAMES_IN_FLIGHT || width == 0 || height == 0 ||
+        !ensure_target(main_targets_[fi], width, height, false, main_frame_sets_[fi],
+                       VK_NULL_HANDLE))
+        return false;
+    record_stage0(cmd, main_targets_[fi], view_proj, overlays);
+    return true;
+}
+
+void CartographicRenderer::record_main_edge(VkCommandBuffer cmd, u32 fi) const {
+    if (!scene_edge_pipeline_ || fi >= FRAMES_IN_FLIGHT || !main_targets_[fi].frame_fb) return;
+    vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, scene_edge_pipeline_);
+    vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, edge_layout_, 0, 1,
+                              &main_frame_sets_[fi], 0, nullptr);
+    vkc::draw(cmd, 3, 1, 0, 0);
 }
 
 void CartographicRenderer::destroy_target(Target& t) {
@@ -578,14 +649,17 @@ void CartographicRenderer::clear(TextureCache& textures) {
         textures.evict(kTopographicKey);
     }
     built_ = false;
+    hypsometric_ds_ = VK_NULL_HANDLE;
     params_ = {};
 }
 
 void CartographicRenderer::destroy() {
     if (!device_) return;
     for (Target& t : targets_) destroy_target(t);
+    for (Target& t : main_targets_) destroy_target(t);
     if (terrain_pipeline_) vkDestroyPipeline(device_, terrain_pipeline_, nullptr);
     if (edge_pipeline_) vkDestroyPipeline(device_, edge_pipeline_, nullptr);
+    if (scene_edge_pipeline_) vkDestroyPipeline(device_, scene_edge_pipeline_, nullptr);
     if (terrain_layout_) vkDestroyPipelineLayout(device_, terrain_layout_, nullptr);
     if (edge_layout_) vkDestroyPipelineLayout(device_, edge_layout_, nullptr);
     if (pool_) vkDestroyDescriptorPool(device_, pool_, nullptr);

@@ -420,6 +420,8 @@ public:
     bool has_toggle_cap(const std::string& cap) const {
         return toggle_caps_.count(cap) > 0;
     }
+    /// Its toggle caps, a bit each as the script bits number them.
+    u16 toggle_cap_bits() const;
     void add_toggle_cap(const std::string& cap) { toggle_caps_.insert(cap); }
     void remove_toggle_cap(const std::string& cap) { toggle_caps_.erase(cap); }
     void restore_toggle_caps() { toggle_caps_ = original_toggle_caps_; }
@@ -591,6 +593,9 @@ public:
                         bool* built = nullptr);
     void finish_build(EntityRegistry& registry, lua_State* L, bool success,
                       map::PathfindingGrid* grid = nullptr);
+    /// A build that ends unfinished, as its task ends in Moho (faf-re
+    /// ~CUnitRepairTask, ~CUnitMobileBuildTask, CBuildTaskHelper::OnStopBuild).
+    void fail_build(EntityRegistry& registry, lua_State* L);
 
     /// Assist helpers (Guard command)
     void stop_assisting(lua_State* L = nullptr, EntityRegistry* registry = nullptr);
@@ -863,7 +868,17 @@ public:
     /// no order (the original, probed).
     bool lifts_off() const { return lifts_off_; }
     void set_lifts_off(bool b) { lifts_off_ = b; }
+    /// Moho's Unit::Warp: to (at.x, at.z), on the layer GetStartingLayer
+    /// gives it there with none asked for, at the height CalcSpawnElevation
+    /// does: the ground or the seabed, the water's surface, a sub's depth
+    /// under it, an aircraft's height over its floor; an experimental
+    /// aircraft on the ground, to lift off. A sub's dive is over. Its move is
+    /// aborted, which the order running hears: a Move order ends (the
+    /// original, probed); one issued after, or not begun, goes on. Without a
+    /// terrain, `at` as given.
+    void warp(const map::Terrain* terrain, const Vector3& at);
     /// Air.FlyInWater: an aircraft that may fly under the water's surface.
+    bool fly_in_water() const { return fly_in_water_; }
     void set_fly_in_water(bool b) { fly_in_water_ = b; }
     /// What an aircraft holds its height over at (x, z): the ground, or the
     /// water's surface above it unless it flies in water (Moho's CUnitMotion
@@ -1501,7 +1516,7 @@ private:
     /// targets of an immobile NeedUnpack unit, so its weapon packs up and
     /// the unit can go.
     void begin_order(UnitCommand& cmd, lua_State* L);
-    /// Coasting, amphibious layer changes, air separation, fuel.
+    /// Coasting, amphibious layer changes, fuel.
     bool tick_after_orders(f64 dt, SimContext& ctx);
     /// A silo assist ended, regeneration, the silo, motion events, weapons,
     /// manipulators. Runs while paused too.
@@ -2026,6 +2041,9 @@ private:
     bool tick_position_set_ = false; // (none before its first tick)
     bool moved_last_tick_ = false;
     bool lifts_off_ = false;
+    /// The order running as a Warp aborted its move (its command id, 0:
+    /// none): a Move order so tagged ends (warp()).
+    u32 warp_aborted_command_ = 0;
     Vector3 last_tick_motion_;      // its move over the last tick
     bool turned_last_tick_ = false; // and whether it turned
     bool auto_overcharge_ = false;

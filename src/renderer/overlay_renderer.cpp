@@ -494,38 +494,6 @@ void OverlayRenderer::add_unit_overlays(const sim::FrameView& view, const sim::W
                           0.3f, 0.8f, 1.0f, 0.8f); // light blue
             }
         }
-
-        // --- Silo ammo indicators (nuke = red, tactical = blue) ---
-        if (unit_bars_ && cam_dist < 400.0f) {
-            i32 nuke = unit->nuke_silo_ammo;
-            i32 tac = unit->tactical_silo_ammo;
-            if (nuke > 0 || tac > 0) {
-                constexpr f32 AMMO_DOT = 5.0f;
-                constexpr f32 AMMO_GAP = 2.0f;
-                constexpr f32 AMMO_Y = 14.0f; // below unit center
-                f32 ax = sx;
-                // Nuke ammo (red dots, left side)
-                if (nuke > 0) {
-                    i32 nd = nuke > 5 ? 5 : nuke;
-                    f32 nw = nd * AMMO_DOT + (nd - 1) * AMMO_GAP;
-                    f32 nx_start = ax - nw - 2.0f;
-                    for (i32 ni = 0; ni < nd; ni++) {
-                        emit_quad(nx_start + ni * (AMMO_DOT + AMMO_GAP),
-                                  sy + AMMO_Y, AMMO_DOT, AMMO_DOT,
-                                  1.0f, 0.15f, 0.1f, 0.9f); // red
-                    }
-                }
-                // Tactical ammo (blue dots, right side)
-                if (tac > 0) {
-                    i32 td = tac > 5 ? 5 : tac;
-                    for (i32 ti = 0; ti < td; ti++) {
-                        emit_quad(ax + 2.0f + ti * (AMMO_DOT + AMMO_GAP),
-                                  sy + AMMO_Y, AMMO_DOT, AMMO_DOT,
-                                  0.2f, 0.4f, 1.0f, 0.9f); // blue
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -786,13 +754,12 @@ void OverlayRenderer::add_game_over_banner(i32 game_result, f32 sw, f32 sh) {
     emit_quad(hx, hy, hint_w, hint_h, 0.1f, 0.1f, 0.15f, 0.7f);
 }
 
-void OverlayRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
-                              u32 viewport_w, u32 viewport_h) {
+void OverlayRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w,
+                             u32 viewport_h, f32 scale) {
     if (quad_count_ == 0 || !white_ds_) return;
 
     // Push viewport size (same format as UI pipeline)
-    f32 vp[2] = {static_cast<f32>(viewport_w),
-                 static_cast<f32>(viewport_h)};
+    f32 vp[2] = {static_cast<f32>(viewport_w) / scale, static_cast<f32>(viewport_h) / scale};
     vkc::push_constants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 2, vp);
 
     // Full-screen scissor

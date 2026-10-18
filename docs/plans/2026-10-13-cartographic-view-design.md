@@ -208,11 +208,45 @@ Not implementable from what is on hand. First extract `/effects/mesh.fx` from re
 - Meshes get no terrain depth, no shadows, no lighting from the scene.
 - Minimap meshes are a few pixels each and the icons cover them; the visible effect is mostly the main view, so this phase belongs with phase 7.
 
+**As built (P6, 2026-10-15), the main view's meshes.** From retail's `mesh.fx`, read from `effects.scd`:
+- **The technique.** It is the `cartographicTechnique` annotation of the lane the fidelity resolves to (High uses Medium, Medium and Low use each other). `cartographic_technique(shader, fidelity)` holds the table, and each GPU mesh caches it for the three lanes from its resolved shader name. The engine's `MeshTechnique` folds several shaders into Unit, so it can't be used.
+  - Units: Unit, Metal, Insect, Aeon, AeonCZAR, Seraphim and SeraphimPersonalShield.
+  - Features: props, trees, wrecks and NormalMappedTerrain.
+  - Feedback: order marks and rally points.
+  - Place: build and formation ghosts, at every fidelity, since only a Low lane exists.
+  - Build: the four build techniques.
+  - Shield: the faction shields and PhaseShield. So a UEF, Cybran or Aeon commander wearing its phase-shield mesh (its warp-in) draws as a highlight.
+  - At Low, NormalMappedAlphaNoShadow and BloatingNormalMappedAlpha are Unit.
+  - Everything else is not drawn.
+- **The shaders.** `CartographicVS`: the world matrix alone, no growth, crumple, sway or feedback scaling. Then the six pixel shaders, and five pass states (colour, glow, opaque, opaque with alpha, shield), culled as the meshes are.
+- **The draw.** After Stage 1, in the scene pass, over the frame. The meshes are the main view's own batch (frustum, LOD, intel), not drawn at the strategic zoom, as `draw_meshes`.
+- **Not yet:** the minimap's meshes. They need a gather of their own over the whole map, and Moho's LOD cutoffs leave few at that zoom.
+
+**As built (2026-10-17), the minimap's meshes.** From faf-re `Cartographic::RenderMeshes`, `GeomCamera3::Init`, `Mesh::ComputeLOD` and `RMeshBlueprintLOD`, and FAF's `MinimapMesh.cpp` patch:
+- **The gather.** `RenderMeshes` batches every mesh through the minimap's own camera, so the engine gathers apart from the world view: a second `UnitRenderer`, with its own instances and bones, culled by the minimap frame's volume.
+- **The LOD.** The minimap camera is orthographic, so its LOD metric is the same everywhere: the view's width times its LOD scale. A minimap view's camera takes `cam_DefaultMiniLOD` (1.8) when the view is made, and keeps it if the convar changes later.
+  - A mesh shows while some LOD takes the metric. A LOD with a cutoff of 0 or less takes any metric; any other LOD takes metrics up to its `LODCutoff`, which defaults to 1000 where the blueprint gives none.
+  - The reach is read from the mesh blueprint's LODs, because the engine's loaded LOD set can be a single-LOD fallback.
+  - Unit counts, from retail's blueprints: 89 of 563 units on 5 km maps, 15 on 10 km, none on 20 km. But some meshes reach any metric: a ping's (99999), and those with `LODCutoff = -1`, such as the cruise missile, the nuke's stem, explosions, build effects and DevTest props. Every map's minimap therefore batches its entities each frame, as Moho's does. FAF's patch comment calls this "thousands of useless LOD calculations".
+  - Which LOD a shown mesh draws comes from the engine's loaded set. That is often LOD 0 alone, because retail's unit LODs name no `MeshName`. At a few pixels a unit, this is not visible.
+  - Each entity's reach is cached in a table indexed by entity id and read again on `SetMesh`. A minimap with nothing to draw costs a look per entity: about a tenth of the world view's gather on SCMP_009's 8,700 entities.
+- **The draw.** The meshes go into the minimap's output after Stage 1, in their cartographic techniques. The output's pass now has a depth, the frame's own, cleared after Stage 0 is done with it. The view-projection is the frame's, with its top raised by 1000 so that aircraft are not clipped.
+- **FAF.** FAF's patched game skips `RenderMeshes` while `cam_DefaultMiniLOD` is 0, which FAF's minimap toggle and `minimap.lua` set. The engine does the same when FAF's data is in use.
+
 ### 3.8 Main view cartographic (phase 7)
 
 - `Camera` gains an ortho flag and the `UpdateCoords` ortho branch (1.0), fixed top-down, no shake; `WorldView::set_cartographic` on the main view sets it, with the prefs key and `ToggleMainCartographicView` working through retail's Lua unchanged.
 - `record_main_pass` branches on the main WorldView's flag: it skips the sky, terrain, decals, water and shadow passes and draws the cartographic frame (window-sized), then the existing meshes/particles/icons/UI layers on top. `ui_AlwaysRenderStrategicIcons` is forced for the duration.
 - Needs the zoom/aspect/clamp rules of `moho-camera-semantics` extended to ortho, and the cinematic restore of `gamemain.lua:546-571` to keep working.
+
+**As built (P7, 2026-10-15).** Researched further in faf-re (`CameraImpl::UpdateCoords`, `WRenViewport::RenderCartographic`, `CWorldParticles::RenderEffects`, `RenderParticleBucket`):
+- The ortho camera changes only UpdateCoords. The zoom, its glide and clamps, pan, and the heading and pitch (still found along for the focus) go on as in perspective. So `Camera::set_ortho` swaps the view (from straight above the focus, -z up), the projection, picking (straight down from over the pixel) and the shake (none).
+- The projection's `r[3].x = -1/int(zoom)` and `r[3].y = +1/int(zoom/aspect)` are kept. They are a D3D9-style half-texel correction in world units, shifting the world by `width/(2·zoom)` pixels. Picking, the icons and the frame all go through the same matrix, so nothing misaligns. A view under one unit high takes one unit instead of dividing by zero.
+- All the engine's world views share the renderer's camera, so only a main (non-minimap) view's `SetCartographic` switches it. A new main view starts in perspective, as a new `CameraImpl` does; retail's `Register` then restores the saved mode.
+- The frame: Stage 0 and the overlays (the main view's range rings at its zoom, the fog's circles) into a window-sized frame of the main view's own, through the camera's matrix. Stage 1 draws straight into the scene pass, clamped as the 8-bit head clamps it, with alpha 0 (no glow).
+- After Stage 1: the particles as `RenderEffects(camera, 0, 1)` draws them, which is the TLight ones alone (no beams, no trails), then the order lines, selection, resource and projectile icons and FAF's world drawing. The strategic icons are forced on (`set_forced`) without touching the player's convar.
+- The shadow, normal and reflection passes still run (Moho draws the world for the view and then paints over it). Skipping them is an optimisation left for later.
+- Tests: `--cartographic-main-test` (the scene is pixel for pixel the frame over the camera's rect, fogged with the army's circles; rings at the main view's zoom; icons; picking; toggling back and a new view), and `tests/test_camera_ortho.cpp`.
 
 ### 3.9 Left out at first (and why)
 
@@ -260,6 +294,14 @@ Each phase is one reviewable PR, with its own tests, in the repo's patterns (uni
 - Check render-pass compatibility between the cartographic passes and the scene pass first; if not compatible, the pipelines are created a second time for the new pass.
 - Tests: selected-unit rings appear in the minimap frame at the right place (probe at the ring's radius); fogged cells are 67% of unfogged; ring depth-test against the flat quad (the ZWrite that P2's mutation list defers).
 - Risk: the rings' alpha writes would distort the contour alpha; see risks.
+- *As built ([#670](https://github.com/bwiemz/supcom-engine/pull/670)):* the render passes aren't compatible (the frame is 8-bit, the scene HDR), so the minimap has a second `RangeRenderer` made for the frame's pass. The stencil-volume code both share moved to `stencil_volume.{hpp,cpp}`.
+  - **Rings:** `collect_range_scene` runs a second time with a frustum of the frame's view (the whole map, as the minimap camera's is). The zoom ratio is 1: minimap.lua's `CameraReset` then `SetMaxZoomMult(1.0)` leaves the camera at its largest zoom, so the lines take their zoomed-out thickness. FAF's toggle for the minimap's rings (`hooks/Minimap.hook`) isn't ported.
+  - **Fog** is Moho's `RenderFogOfWar`, not a ground-quad darkening. `VisionRenderer` casts each vision circle as a cylinder of the ring volume (inner radius 0) into the stencil against the quad's depth: z-fail, front faces `incr`, back faces `decr`, wrapping as vision.fx's states do, so 256 circles over one point count it back to fogged. frame.fx's `Vision` then darkens what counted 0 with black at alpha 0.33, colour only, so the contour alpha is untouched.
+  - **The circles** follow `UserUnit::Tick`'s VisionDB handle: every unit with a vision range whose army the focus army calls an ally (its own included), at its interpolated position, its radius the range's whole units. A unit being built or dying has none, and the vision toggle doesn't matter. Not drawn for an observer, with the engine's fog off, or with no fog of war.
+  - **Left out:** script entities' vision (VizMarker) and `CreateVisibleAreaAtPoint`. Which army a VizMarker's user entity has isn't known (its spec names no owner), and retail's scripts never call the other.
+  - **Order** as `Cartographic::Render`'s: Stage 0, the rings, the fog, then Stage 1. Fogged rings dim with the ground, and the rings' glow alpha goes through the edge detect as Moho's does.
+  - **The frame's depth range** takes in the volumes (5 below the map's lowest point to its highest), or the cylinders' bottom caps, the only faces behind the quad seen from above, would be clipped. The volumes themselves keep Moho's span (`VisionRenderer::Init` and the range volumes read the map's height range), so on a map flooded over its highest ground the quad lies above them and nothing counts, as it would in Moho.
+  - **Tests:** `--cartographic-test` checks the fog's pixels (clear in the circle, 67% outside with alpha unchanged), no vision, the 255/256 wrap, a ring's line, fill and beyond, and the order. `--cartographic-minimap-test` checks a live frame's circles, the selected unit's ring at full zoom, and an observer's no fog. Mutations killed: the back faces' count clamped, the fog's alpha, its alpha write, fog before rings, no depth widening, Stage 0's depth write off (P2's deferred one), the world view's zoom ratio. The front faces' count clamped survives, and can't be seen here: from above, the only faces behind the quad are the cylinders' bottom caps, all one facing.
 
 **P6. Meshes** — only after `mesh.fx` is extracted and read (3.7). Tests: the draw counts of materials with and without the annotation; depth ordering; probes of a unit's colour against the ramp.
 

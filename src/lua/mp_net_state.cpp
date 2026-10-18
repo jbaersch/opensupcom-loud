@@ -27,6 +27,7 @@ void MpNetState::reset() {
     lobby_game = nullptr;
     lobby_transport.reset();
     source_armies.clear();
+    army_sources.clear();
     clients.clear();
     transport_ready = false;
 }
@@ -36,6 +37,10 @@ osc::i32 MpNetState::army_of(osc::u32 source) const {
     return source < source_armies.size() ? source_armies[source] : -1;
 }
 
+osc::i32 MpNetState::source_of_army(osc::i32 army) const {
+    return army >= 0 && static_cast<size_t>(army) < army_sources.size() ? army_sources[army] : -1;
+}
+
 MpNetState& mp_net_state() {
     static MpNetState s;
     return s;
@@ -43,13 +48,24 @@ MpNetState& mp_net_state() {
 
 void mp_begin_lobby_game(std::unique_ptr<osc::sim::LobbyGameTransport> transport,
                          osc::u32 local_source, std::vector<osc::i32> armies,
-                         std::vector<SessionClient> clients, osc::u64 seed) {
+                         std::vector<SessionClient> clients, osc::u64 seed,
+                         std::vector<osc::i32> army_sources) {
     auto& s = mp_net_state();
     s.reset(); // any game set up before goes
     s.local_source = local_source;
     s.all_sources.clear();
     for (osc::u32 source = 0; source < armies.size(); ++source) s.all_sources.push_back(source);
     s.source_armies = std::move(armies);
+    if (army_sources.empty()) {
+        for (osc::u32 source = 0; source < s.source_armies.size(); ++source) {
+            const osc::i32 army = s.source_armies[source];
+            if (army < 0) continue;
+            if (static_cast<size_t>(army) >= army_sources.size())
+                army_sources.resize(static_cast<size_t>(army) + 1, -1);
+            army_sources[static_cast<size_t>(army)] = static_cast<osc::i32>(source);
+        }
+    }
+    s.army_sources = std::move(army_sources);
     s.seed = seed;
     s.clients = std::move(clients);
     s.lobby_game = transport.get();
@@ -122,10 +138,16 @@ bool mp_attach_session(osc::sim::SimState& sim) {
     if (!s.transport_ready || !s.lobby_transport) return false;
     s.session = std::make_unique<osc::sim::LockstepSession>(sim, *s.lobby_transport, s.local_source,
                                                             s.all_sources);
-    // Each source plays its army (as a dropped peer's defeat and GetFocusArmy
-    // take it): each peer's orders move only its own army's units, and an
-    // observer's none.
-    for (const osc::u32 source : s.all_sources) sim.set_source_army(source, s.army_of(source));
+    // Each source plays its army (the focus army it starts with). What it may
+    // command the session gave each army as it began (its command sources,
+    // numbered as the lobby numbers them): say so if they disagree.
+    for (const osc::u32 source : s.all_sources) {
+        const osc::i32 army = s.army_of(source);
+        sim.set_source_army(source, army);
+        if (army >= 0 && sim.command_sources_known() && !sim.army_has_command_source(army, source))
+            spdlog::error("[mp] source {} plays army {}, which doesn't take its commands", source,
+                          army);
+    }
     // Each source's pause timeouts, as Moho's: a player the game's Timeouts
     // ('0', '3', '-1': unlimited), an observer none
     const osc::i32 timeouts = game_timeouts(sim);

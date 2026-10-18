@@ -28,9 +28,10 @@
 #include "renderer/recon_view.hpp"
 #include "renderer/unit_renderer.hpp"
 #include "renderer/sky_renderer.hpp"
+#include "renderer/boundary_renderer.hpp"
 #include "renderer/cartographic_renderer.hpp"
+#include "renderer/cartographic_technique.hpp"
 #include "renderer/water_renderer.hpp"
-#include "renderer/fog_renderer.hpp"
 #include "renderer/particle_system.hpp"
 #include "renderer/wave_system.hpp"
 #include "renderer/particle_renderer.hpp"
@@ -44,8 +45,11 @@
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/beam_renderer.hpp"
 #include "renderer/command_feedback.hpp"
+#include "renderer/world_quad_batch.hpp"
+#include "renderer/world_shapes.hpp"
 #include "renderer/command_graph_renderer.hpp"
 #include "renderer/range_renderer.hpp"
+#include "renderer/vision_renderer.hpp"
 #include "renderer/input_handler.hpp"
 #include "renderer/selection_renderer.hpp"
 #include "renderer/trail_blueprint.hpp"
@@ -123,6 +127,7 @@ public:
     /// NVIDIA's proprietary driver), for machines without any display.
     bool init(u32 width, u32 height, const std::string& title,
               bool offscreen = false);
+    void set_offscreen_scale(f32 scale) { offscreen_scale_ = scale; }
 
     /// One-time scene upload (terrain mesh, static buffers, and the meshes
     /// of `preload`, e.g. sim::world_blueprints).
@@ -172,6 +177,7 @@ public:
 
     /// Access texture cache (for MapPreview uploads).
     TextureCache& texture_cache() { return texture_cache_; }
+    const FontCache& font_cache() const { return font_cache_; }
 
     /// Returns true if the window close was requested.
     bool should_close() const;
@@ -230,6 +236,29 @@ public:
         const auto i = static_cast<size_t>(technique);
         return i < mesh_draws_.size() ? mesh_draws_[i] : 0;
     }
+    /// The last frame's cartographic mesh passes drawn with `technique`
+    /// (a Unit group's two count twice).
+    u32 cartographic_mesh_draws(CartographicTechnique technique) const {
+        const auto i = static_cast<size_t>(technique);
+        return i < cartographic_mesh_draws_.size() ? cartographic_mesh_draws_[i] : 0;
+    }
+    /// FAF's patched game (its data in use): while cam_DefaultMiniLOD is 0
+    /// the cartographic minimap draws no meshes (FA-Binary-Patches
+    /// MinimapMesh.cpp), as FAF's minimap toggle has it.
+    void set_faf_exe(bool on) { faf_exe_ = on; }
+    /// The cartographic minimap's meshes the last frame (minimap_meshes.hpp):
+    /// whether they were gathered (not without a cartographic minimap, or
+    /// with FAF's toggle off), the minimap camera's LOD metric, the instances
+    /// gathered, and the passes drawn with `technique`.
+    bool minimap_meshes_gathered() const { return minimap_meshes_gathered_; }
+    f32 minimap_lod_metric() const { return minimap_lod_metric_; }
+    u32 minimap_mesh_instances() const;
+    u32 minimap_mesh_draws(CartographicTechnique technique) const {
+        const auto i = static_cast<size_t>(technique);
+        return i < minimap_mesh_draws_.size() ? minimap_mesh_draws_[i] : 0;
+    }
+    /// The minimap's gathered meshes, in their groups (tests read them).
+    const UnitRenderer& minimap_units() const { return minimap_units_; }
     /// The terrain shader's Time, TTerrainGlow's scroll (tests read it;
     /// M212f).
     f32 terrain_time() const { return terrain_time_.value(); }
@@ -238,12 +267,26 @@ public:
     /// The beams drawn last frame (tests read them; M214a).
     const BeamRenderer& beam_renderer() const { return beam_renderer_; }
     const CommandGraphRenderer& command_graph_renderer() const { return command_graph_renderer_; }
+    /// What the world view's OnRenderWorld drew this frame (FAF's
+    /// UI_DrawLine and kin)
+    const WorldShapes& world_shapes() const { return world_shapes_; }
     const SelectionRenderer& selection_renderer() const { return selection_renderer_; }
     /// FA's range overlays: the profiles and filters its UI sets and the
     /// range convars (Moho's viewport keeps them), and what they drew.
     RangeOverlays& range_overlays() { return *range_overlays_; }
     void share_range_overlays(RangeOverlays& overlays) { range_overlays_ = &overlays; }
     const RangeRenderer& range_renderer() const { return range_renderer_; }
+    /// The cartographic minimap's range rings and fog, drawn into its frame
+    /// (Moho's Cartographic::Render), as last updated.
+    const RangeRenderer& minimap_ranges() const { return minimap_ranges_; }
+    const VisionRenderer& minimap_vision() const { return minimap_vision_; }
+    /// The world's fog of war, as last updated
+    const VisionRenderer& world_vision() const { return vision_renderer_; }
+    /// Whether the last frame drew the main view cartographic (its world
+    /// view's SetCartographic: the camera ortho), and the range rings drawn
+    /// into that frame.
+    bool cartographic_main() const { return cartographic_main_; }
+    const RangeRenderer& main_frame_ranges() const { return main_frame_ranges_; }
     /// The unit under the cursor (0: none) and the drag box's corners on the
     /// ground, for the next render()
     void set_command_highlight(u32 command_id) { highlight_command_ = command_id; }
@@ -272,12 +315,24 @@ public:
         std::vector<u8> frame;  ///< Stage 0: the ramp's colour, the band's shade in alpha
         std::vector<u8> output; ///< Stage 1: with the contour lines, alpha 0
     };
+    /// What a capture draws over Stage 0, as the minimap's frame has it:
+    /// range batches (for a map whose playable rect's larger side is
+    /// `ring_span`, at the minimap's full zoom) and the fog's vision circles
+    /// (none: no fog).
+    struct CartographicOverlayInput {
+        std::vector<RangeBatch> rings;
+        f32 ring_span = 0.0f;
+        std::optional<std::vector<RangeRing>> fog;
+    };
     /// Draw `terrain`'s cartographic frame for `view` now, outside any frame,
     /// built from its heights as they are, and read both stages back (tests
     /// of the port). Nothing without a device, or before the texture cache is
-    /// up (a scene built, or init_ui_caches).
-    std::optional<CartographicImages> capture_cartographic(const map::Terrain& terrain,
-                                                           const CartographicRenderer::View& view);
+    /// up (a scene built, or init_ui_caches). `with_meshes`: the output takes
+    /// the minimap's meshes the last frame gathered too (draw_minimap_meshes).
+    std::optional<CartographicImages>
+    capture_cartographic(const map::Terrain& terrain, const CartographicRenderer::View& view,
+                         const CartographicOverlayInput* overlays = nullptr,
+                         bool with_meshes = false);
     /// Off, the fog of war neither dims the world nor hides what's in it.
     void set_fog_enabled(bool enabled) { fog_enabled_ = enabled; }
     bool fog_enabled() const { return fog_enabled_; }
@@ -332,6 +387,12 @@ public:
         selection_renderer_.set_enabled(on);
     }
     bool select_boxes() const { return overlay_renderer_.select_boxes(); }
+    /// ren_PlayableBoundary (Moho's default on): outside a playable rect
+    /// smaller than the map, the world blacked out (RenderPlayableBoundary)
+    void set_playable_boundary(bool on) { playable_boundary_ = on; }
+    bool playable_boundary() const { return playable_boundary_; }
+    /// The world's boundary, as last updated (tests read it)
+    const BoundaryRenderer& world_boundary() const { return boundary_renderer_; }
     /// The strategic icons drawn last frame (tests read them).
     const StrategicIconRenderer& strategic_icons() const { return strategic_icon_renderer_; }
     const ResourceIconRenderer& resource_icons() const { return resource_icon_renderer_; }
@@ -381,8 +442,8 @@ public:
     u32 stored_decal_count() const { return static_cast<u32>(stored_decals_.size()); }
     /// The runtime decals and splats (M212c), as the last frame drew them.
     const RuntimeDecalRenderer& runtime_decals() const { return runtime_decals_; }
-    /// The unit meshes the last frame drew, and the cubes drawn for those
-    /// with none.
+    /// The unit meshes the last frame drew (not the map's border, there in
+    /// every frame), and the cubes drawn for those with none.
     u32 mesh_instance_count() const;
     u32 cube_instance_count() const { return unit_renderer_.cube_instance_count(); }
     const MinimapRenderer& minimap() const { return minimap_renderer_; }
@@ -398,9 +459,13 @@ public:
     bool legacy_hud_active() const { return legacy_hud_active_; }
     u32 width() const { return window_width_; }
     u32 height() const { return window_height_; }
+    f32 ui_scale() const { return ui_scale_; }
+    u32 ui_width() const { return core::ui_extent(window_width_, window_height_, ui_scale_)[0]; }
+    u32 ui_height() const { return core::ui_extent(window_width_, window_height_, ui_scale_)[1]; }
 
-    /// Get current mouse position in screen pixels.
+    /// Get current mouse position in framebuffer pixels.
     void mouse_position(f64& x, f64& y) const;
+    void ui_mouse_position(f64& x, f64& y) const;
     /// Put `text` (UTF-8) on the desktop's clipboard (FAF's CopyToClipboard).
     /// False without a window, and offscreen, so that a scripted run never
     /// replaces what the player copied.
@@ -608,9 +673,12 @@ private:
         bool blend1 = false;
     };
     TerrainStrataViews terrain_strata_views(const map::Terrain& terrain);
-    /// The fog of war's texture, a texel per vision cell, into the terrain's
-    /// set (binding 20).
-    void init_fog_texture(const map::Terrain& terrain);
+    /// The terrain's set's binding 20, which nothing reads now (it held the
+    /// fog of war's grid): white, so the set is whole.
+    void bind_unused_terrain_slot();
+    /// This frame's fog of war: the focus army's vision circles, for the
+    /// world's and the minimap's vision renderers.
+    void update_fog(const sim::FrameView& view, u32 fi);
     /// The map's normal maps into the terrain's set (binding 21), and the
     /// normal target the normal pass draws (binding 26).
     void bind_terrain_normal_maps(const TerrainNormalMaps& normal_maps);
@@ -624,11 +692,27 @@ private:
     /// overlays, the water's, sky's and terrain's time, the scripts' decals,
     /// the legacy HUD, the strategic icons and the profile overlay -- in that
     /// order, into frame slot `fi`'s buffers.
+    /// FAF's world drawing: the main world view's OnRenderWorld(self,
+    /// delta), with its custom rendering on (SetCustomRender), collecting
+    /// the shapes UI_DrawLine and its kin draw; into frame slot `fi`.
+    void update_world_shapes(lua_State* L, u32 fi);
     void update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum,
                             const sim::FrameView& view, sim::WorldEvents& events,
                             const BuildGhost* ghost, lua_State* L,
                             ui::UIControlRegistry* ui_registry,
                             const std::unordered_set<u32>* selected_ids);
+    /// The cartographic minimap's range rings this frame (its view drawn,
+    /// so cartographic_view_ set): Moho's range renderer with the minimap's
+    /// camera. Its fog, the world's circles, update_fog gives it.
+    void update_minimap_overlays(const sim::FrameView& view, const BuildGhost* ghost, lua_State* L,
+                                 const std::unordered_set<u32>* selected_ids, f32 span, u32 fi);
+    /// The minimap's rings and fog into its cartographic frame (record()'s
+    /// overlays), frame slot `fi`'s.
+    void draw_minimap_overlays(VkCommandBuffer cmd, const f32* view_proj, u32 width, u32 height,
+                               u32 fi) const;
+    /// The heights the range and fog volumes span: from 5 below the map's
+    /// lowest point to its highest (FAF's Sim::Create_exxt).
+    void set_volume_heights(const map::Heightmap& heights);
 
     // A frame's command stages, in render()'s order (render_ui_only takes the
     // first, the swapchain pass and the last).
@@ -655,9 +739,41 @@ private:
     /// selection, the refracting effects. Its pass is left open (the
     /// composite ends it).
     void record_main_pass(u32 fi, const std::array<f32, 16>& vp);
-    /// The screen's 2D layers over the composited scene: the strategic
-    /// icons, the overlays, the legacy HUD, FA's interface, then the profile
-    /// overlay on top.
+    /// A cartographic main view's scene in its place, in the open pass (the
+    /// rest of Moho's Cartographic::Render): the frame's Stage 1, the light
+    /// particles, then the world view's own drawing. No sky, terrain, water,
+    /// meshes or other effects; the range rings and fog are in the frame.
+    void record_cartographic_main(u32 fi, const std::array<f32, 16>& vp);
+    void record_view_drawing(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp);
+    /// The meshes a cartographic main view draws (MeshRenderer::
+    /// RenderCartographic): each group by its material's cartographic
+    /// technique at this fidelity (none: not drawn), over the frame, with
+    /// no lighting, shadow or terrain.
+    void draw_cartographic_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp);
+    /// The cartographic minimap's (RenderMeshes after Stage 1), into its
+    /// output: what update_minimap_meshes gathered for slot `fi`.
+    void draw_minimap_meshes(VkCommandBuffer cmd, u32 fi, const f32* view_proj);
+    /// Either's groups, each by its cartographic technique at this
+    /// fidelity, `draws` counting the passes.
+    void draw_cartographic_groups(VkCommandBuffer cmd, const UnitRenderer& units,
+                                  VkDescriptorSet bones,
+                                  const std::array<VkPipeline, kCartographicMeshStates>& pipelines,
+                                  VkPipelineLayout layout, const f32* view_proj,
+                                  std::array<u32, 7>& draws);
+    /// The minimap's meshes for this frame (Cartographic::RenderMeshes'
+    /// Batch through its camera): every entity whose mesh reaches the
+    /// camera's LOD metric, its view's width times the LOD scale the view
+    /// was made with. None when FAF's toggle turns them off.
+    void update_minimap_meshes(const sim::FrameView& view, lua_State* L, u32 fi);
+    /// The cartographic mesh pipeline for `state` in `pass` (the scene's,
+    /// or the minimap output's).
+    VkPipeline build_cartographic_mesh_pipeline(VkShaderModule cv, VkShaderModule cf,
+                                                CartographicMeshState state, VkRenderPass pass,
+                                                VkPipelineLayout* layout);
+    /// The minimap's set of them, once the cartographic renderer is made.
+    void create_minimap_mesh_pipelines();
+    /// The screen's 2D layers over the composited scene: the overlays, the
+    /// legacy HUD, FA's interface, then the profile overlay on top.
     void record_screen_layers(u32 fi);
     /// End slot `fi`'s commands, submit them and present `image_index`,
     /// delivering the captures recorded (`capturing`, `scene_capturing`)
@@ -665,11 +781,14 @@ private:
     /// counts its commands and its sequence (a UI-only frame's aren't one).
     void submit_and_present(u32 fi, u32 image_index, bool world, bool capturing,
                             bool scene_capturing);
+    void refresh_ui_scale();
 
     // GLFW
     GLFWwindow* window_ = nullptr;
     u32 window_width_ = 0;
     u32 window_height_ = 0;
+    f32 ui_scale_ = 1.0f;
+    f32 offscreen_scale_ = 1.0f;
 
     // Vulkan core
     VkInstance instance_ = VK_NULL_HANDLE;
@@ -732,6 +851,10 @@ private:
     /// The order marks' (CommandFeedback): blended colour, no depth test.
     VkPipeline mesh_feedback_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_feedback_layout_ = VK_NULL_HANDLE;
+    /// The map border's glow pass (MapImager's P1, AlphaBlend_Disable_Write_A):
+    /// alpha alone, unblended, depth tested and written.
+    VkPipeline mesh_glow_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout mesh_glow_layout_ = VK_NULL_HANDLE;
     /// The shields' pipelines (M211k), one per ShieldState: blended (Cybran,
     /// Aeon), blended unculled (UEF, Cybran's impact), added colour
     /// (Seraphim), added colour and glow (the impact), the fill's depth, and
@@ -739,8 +862,19 @@ private:
     static constexpr u32 kShieldStates = 6;
     std::array<VkPipeline, kShieldStates> shield_pipelines_{};
     std::array<VkPipelineLayout, kShieldStates> shield_layouts_{};
+    /// A cartographic view's mesh pipelines, one per CartographicMeshState
+    /// (cartographic P6)
+    std::array<VkPipeline, kCartographicMeshStates> cartographic_mesh_pipelines_{};
+    std::array<VkPipelineLayout, kCartographicMeshStates> cartographic_mesh_layouts_{};
     /// This frame's mesh draw calls by technique (mesh_draws).
     std::array<u32, 32> mesh_draws_{};
+    /// And a cartographic view's, by CartographicTechnique, a pass each
+    std::array<u32, 7> cartographic_mesh_draws_{};
+    /// The cartographic minimap's mesh pipelines (its output's pass), and
+    /// its passes drawn last frame
+    std::array<VkPipeline, kCartographicMeshStates> minimap_mesh_pipelines_{};
+    std::array<VkPipelineLayout, kCartographicMeshStates> minimap_mesh_layouts_{};
+    std::array<u32, 7> minimap_mesh_draws_{};
     VkPipeline decal_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout decal_layout_ = VK_NULL_HANDLE;
     // The glowing and glow-mask decals' (M212d): decal_layout_'s sets and push
@@ -775,6 +909,10 @@ private:
     u32 bone_ds_generation_[FRAMES_IN_FLIGHT] = {};
     /// Point slot `fi`'s bone set at the unit renderer's SSBO for that slot.
     void write_bone_descriptor(u32 fi);
+    /// The minimap's units' bone sets, likewise.
+    VkDescriptorSet minimap_bone_ds_[FRAMES_IN_FLIGHT] = {};
+    u32 minimap_bone_ds_generation_[FRAMES_IN_FLIGHT] = {};
+    void write_minimap_bone_descriptor(u32 fi);
 
     // Terrain texture infrastructure (set=0 for terrain pipeline: 11 samplers)
     VkDescriptorSetLayout terrain_tex_ds_layout_ = VK_NULL_HANDLE;
@@ -803,6 +941,8 @@ private:
     CommandFeedbackBlips feedback_blips_;
     /// This frame's marks and world meshes, into the unit renderer's instances.
     void inject_feedback_blips(lua_State* L, const std::vector<WorldMeshDraw>& world_meshes);
+    /// The map's border meshes (MapBorderAdd's), likewise.
+    void inject_map_border(lua_State* L, const std::vector<std::string>& meshes);
     /// FA's cursor as the window's own (Moho's hardware cursor): made from
     /// the UI cursor's image and hotspot, one per pair, while the window is
     /// the player's. An offscreen capture draws it with the UI instead.
@@ -814,11 +954,25 @@ private:
     vfs::VirtualFileSystem* vfs_ = nullptr; ///< where the cursor's images are read
     WaterRenderer water_renderer_;
     SkyRenderer sky_renderer_; // the map's sky dome (M210b)
-    CartographicRenderer cartographic_; ///< the minimap's map
+    CartographicRenderer cartographic_; ///< the minimap's map, and a main view's
+    /// This frame's: the main view is cartographic, its frame drawn (from
+    /// when the frame is recorded; set_forced the icons before that)
+    bool cartographic_main_ = false;
     /// The cartographic frame a minimap view draws this frame (the first
     /// cartographic one painted), recorded before the scene's passes.
     std::optional<CartographicRenderer::View> cartographic_view_;
-    FogRenderer fog_renderer_;
+    /// That minimap view's camera's LOD scale (cam_DefaultMiniLOD when made)
+    f32 minimap_lod_scale_ = 1.8f;
+    /// The minimap's meshes, gathered through its camera apart from the
+    /// world view's (their own instances and bones)
+    UnitRenderer minimap_units_;
+    bool minimap_meshes_gathered_ = false;
+    f32 minimap_lod_metric_ = 0.0f;
+    u32 minimap_fi_ = 0; ///< the slot the last gather filled
+    bool faf_exe_ = false;
+    VisionRenderer vision_renderer_; ///< the world's fog of war (scene pass)
+    bool fog_on_ = false;            ///< this frame's: a focus army, fog of war
+    std::vector<RangeRing> fog_circles_;
     UIRenderer ui_renderer_;
     MovieTextures movie_textures_; ///< Movie controls' frames (M216a)
     OverlayRenderer overlay_renderer_;
@@ -919,6 +1073,8 @@ private:
     // UI 2D pipeline
     VkPipeline ui_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout ui_layout_ = VK_NULL_HANDLE;
+    VkPipeline scene_ui_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout scene_ui_layout_ = VK_NULL_HANDLE;
 
     // Shadow mapping (Moho's, M210c): the map, its depth and the blur's
     // targets (shadow_map.hpp); B of the second is the terrain's mask.
@@ -986,11 +1142,22 @@ private:
     const map::Terrain* terrain_ = nullptr;
     BeamRenderer beam_renderer_;
     CommandGraphRenderer command_graph_renderer_;
+    WorldShapes world_shapes_;          ///< FAF's world drawing, this frame
+    WorldQuadBatch world_shapes_batch_; ///< and drawn
     bool ui_keys_blocked_ = false;
     SelectionRenderer selection_renderer_;
     RangeOverlays own_range_overlays_;
     RangeOverlays* range_overlays_ = &own_range_overlays_;
     RangeRenderer range_renderer_;
+    RangeRenderer minimap_ranges_; ///< in the cartographic frame's pass
+    /// The cartographic frames' fog (the minimap's, and a main view's: the
+    /// same circles)
+    VisionRenderer minimap_vision_;
+    RangeRenderer main_frame_ranges_;    ///< a cartographic main view's, likewise
+    BoundaryRenderer boundary_renderer_; ///< the world's playable boundary (scene pass)
+    /// The cartographic frames' (the minimap's, a main view's)
+    BoundaryRenderer frame_boundary_;
+    bool playable_boundary_ = true; ///< ren_PlayableBoundary
     RangeBlueprints range_blueprints_;
     u32 hovered_ = 0;
     u32 highlight_command_ = 0;

@@ -4,6 +4,7 @@
 // takes it back up.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
@@ -44,7 +45,8 @@ std::unique_ptr<osc::map::Terrain> flat_terrain(u32 size, f32 water) {
 }
 
 /// A sim on a flat map with a 2x2 aircraft that lands a second after its
-/// orders run out ('plane'), and one that never does ('drone').
+/// orders run out ('plane', winged 'fighter'), and one that never does
+/// ('drone', winged 'flier').
 struct World {
     osc::lua::LuaState state;
     osc::blueprints::BlueprintStore store{state.raw()};
@@ -68,6 +70,12 @@ struct World {
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = "
                  "5},"
                  " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 "{BlueprintId = 'giant', Categories = {'AIR', 'MOBILE', 'EXPERIMENTAL'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
+                 " Footprint = {SizeX = 2, SizeZ = 2},"
+                 " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = "
+                 "5},"
+                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
                  "{BlueprintId = 'drone', Categories = {'AIR', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
@@ -85,6 +93,18 @@ struct World {
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = "
                  "5},"
                  " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 "{BlueprintId = 'fighter', Categories = {'AIR', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
+                 " Footprint = {SizeX = 2, SizeZ = 2},"
+                 " Air = {CanFly = true, Winged = true, MaxAirspeed = 15, KMove = 1,"
+                 " KMoveDamping = 1, StartTurnDistance = 5, TurnSpeed = 1.5, AutoLandTime = 1},"
+                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 18}}",
+                 "{BlueprintId = 'flier', Categories = {'AIR', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
+                 " Footprint = {SizeX = 2, SizeZ = 2},"
+                 " Air = {CanFly = true, Winged = true, MaxAirspeed = 15, KMove = 1,"
+                 " KMoveDamping = 1, StartTurnDistance = 5, TurnSpeed = 1.5, AutoLandTime = 0},"
+                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 18}}",
                  "{BlueprintId = 'tank', Categories = {'LAND', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
                  " Physics = {MotionType = 'RULEUMT_Land'}}",
@@ -100,7 +120,8 @@ struct World {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"plane", "drone", "ferry", "pod", "tank"}) {
+        for (const char* id :
+             {"plane", "giant", "drone", "ferry", "pod", "fighter", "flier", "tank"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -122,6 +143,23 @@ struct World {
         REQUIRE(found);
         lua_settop(state.raw(), 0);
         return found;
+    }
+
+    Unit* build(const char* bp, f32 x, f32 z) {
+        lua_State* L = state.raw();
+        lua_pushstring(L, "__osc_create_building_unit");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        lua_pushstring(L, bp);
+        lua_pushnumber(L, 1);
+        lua_pushnumber(L, x);
+        lua_pushnil(L);
+        lua_pushnumber(L, z);
+        REQUIRE(lua_pcall(L, 5, 2, 0) == 0);
+        auto* u =
+            static_cast<Unit*>(sim.entity_registry().find(static_cast<u32>(lua_tonumber(L, -2))));
+        lua_settop(L, 0);
+        REQUIRE(u);
+        return u;
     }
 
     static void move(Unit& u, f32 x, f32 z) {
@@ -194,6 +232,35 @@ TEST_CASE("Two aircraft idle at one spot land apart: the second keeps off the fi
     CHECK(std::sqrt(dx * dx + dz * dz) >= 2.0f); // their 2x2 places apart
 }
 
+TEST_CASE("Aircraft sent to one point all finish the move there and land", "[air_landing]") {
+    World w;
+    std::vector<Unit*> planes;
+    for (int i = 0; i < 5; ++i) {
+        planes.push_back(w.make("plane", 30.0f + 3.0f * static_cast<f32>(i), 30.0f));
+        World::move(*planes.back(), 64.0f, 64.0f);
+    }
+    std::vector<int> finished(planes.size(), -1);
+    int tick = 0;
+    const int t = w.run_until(
+        [&] {
+            for (size_t i = 0; i < planes.size(); ++i) {
+                if (finished[i] < 0 && planes[i]->command_queue().empty()) {
+                    finished[i] = tick;
+                }
+            }
+            ++tick;
+            return std::all_of(planes.begin(), planes.end(),
+                               [](const Unit* p) { return !p->is_air_unit(); });
+        },
+        800);
+    INFO("ticks " << t);
+    for (size_t i = 0; i < planes.size(); ++i) {
+        INFO("plane " << i << " finished its move at tick " << finished[i]);
+        CHECK(finished[i] >= 0);
+        CHECK_FALSE(planes[i]->is_air_unit());
+    }
+}
+
 TEST_CASE("With nowhere to land an aircraft stays up, CannotFindPlaceToLand; one that never "
           "lands idles in the air",
           "[air_landing]") {
@@ -214,6 +281,87 @@ TEST_CASE("With nowhere to land an aircraft stays up, CannotFindPlaceToLand; one
     CHECK_FALSE(drone.idle_landing().descending);
 }
 
+namespace {
+
+struct Flight {
+    f32 slowest = 1e9f;
+    f32 farthest = 0.0f;
+    int landing_tries = 0;
+};
+
+Flight watch(World& w, const Unit& u, const osc::sim::Vector3& from, int after, int ticks) {
+    for (int t = 0; t < after; ++t) {
+        w.sim.tick();
+    }
+    Flight seen;
+    for (int t = 0; t < ticks; ++t) {
+        const osc::sim::Vector3 was = u.position();
+        const bool failed = u.has_unit_state("CannotFindPlaceToLand");
+        w.sim.tick();
+        if (!failed && u.has_unit_state("CannotFindPlaceToLand")) {
+            ++seen.landing_tries;
+        }
+        const osc::sim::Vector3 at = u.position();
+        seen.slowest = std::min(seen.slowest, std::hypot(at.x - was.x, at.z - was.z) * 10.0f);
+        seen.farthest = std::max(seen.farthest, std::hypot(at.x - from.x, at.z - from.z));
+    }
+    return seen;
+}
+
+} // namespace
+
+TEST_CASE("An idle aircraft that can't land, or is told to speed through, flies on round its "
+          "place at speed; one that isn't comes to rest",
+          "[air_landing]") {
+    const osc::sim::Vector3 place{64.0f, 0.0f, 64.0f};
+    SECTION("CannotFindPlaceToLand") {
+        World w(128, 20.0f);
+        Unit& fighter = *w.make("fighter", 30.0f, 64.0f);
+        World::move(fighter, place.x, place.z);
+        w.run_until([&] { return fighter.has_unit_state("CannotFindPlaceToLand"); }, 400);
+        REQUIRE(fighter.has_unit_state("CannotFindPlaceToLand"));
+        REQUIRE(fighter.command_queue().empty());
+        const Flight seen = watch(w, fighter, place, 20, 300);
+        CHECK(seen.slowest > 2.0f);
+        CHECK(seen.farthest < 30.0f);
+        CHECK(seen.landing_tries >= 2);
+    }
+    SECTION("ForceSpeedThrough") {
+        World w;
+        Unit& flier = *w.make("flier", 30.0f, 64.0f);
+        World::move(flier, place.x, place.z);
+        w.run_until([&] { return flier.command_queue().empty(); }, 400);
+        flier.set_unit_state("ForceSpeedThrough", true);
+        const Flight seen = watch(w, flier, place, 20, 300);
+        CHECK(seen.slowest > 2.0f);
+        CHECK(seen.farthest < 30.0f);
+    }
+    SECTION("neither") {
+        World w;
+        Unit& flier = *w.make("flier", 30.0f, 64.0f);
+        World::move(flier, place.x, place.z);
+        w.run_until([&] { return flier.command_queue().empty(); }, 400);
+        flier.navigator().set_speed_through_goal(true);
+        CHECK(watch(w, flier, place, 100, 100).slowest < 0.1f);
+    }
+}
+
+TEST_CASE("A winged aircraft guarding a unit that stands still flies round it, never hanging "
+          "over it",
+          "[air_landing]") {
+    World w;
+    const Unit& tank = *w.make("tank", 64.0f, 64.0f);
+    Unit& fighter = *w.make("fighter", 30.0f, 64.0f);
+    osc::sim::UnitCommand guard;
+    guard.type = osc::sim::CommandType::Guard;
+    guard.target_id = tank.entity_id();
+    guard.target_pos = tank.position();
+    fighter.push_command(guard, true);
+    const Flight seen = watch(w, fighter, tank.position(), 200, 300);
+    CHECK(seen.slowest > 2.0f);
+    CHECK(seen.farthest < 30.0f);
+}
+
 TEST_CASE("An aircraft under construction neither lands nor takes off", "[air_landing]") {
     World w;
     Unit& plane = *w.make("plane", 40.0f, 40.0f);
@@ -224,6 +372,28 @@ TEST_CASE("An aircraft under construction neither lands nor takes off", "[air_la
     CHECK_FALSE(plane.idle_landing().descending);
     CHECK(plane.position().x == at.x);
     CHECK(plane.position().z == at.z);
+}
+
+TEST_CASE("An EXPERIMENTAL aircraft is built on the ground and takes off once finished; another "
+          "is built in the Air",
+          "[air_landing]") {
+    const bool experimental = GENERATE(false, true);
+    World w;
+    Unit& u = *w.build(experimental ? "giant" : "plane", 40.0f, 40.0f);
+    if (experimental) {
+        CHECK(u.layer() == "Land");
+        CHECK(u.position().y == 10.0f);
+    } else {
+        CHECK(u.layer() == "Air");
+    }
+    const std::string layer = u.layer();
+    for (int i = 0; i < 10; ++i) {
+        w.sim.tick();
+    }
+    CHECK(u.layer() == layer);
+    u.set_is_being_built(false);
+    w.sim.tick();
+    CHECK(u.is_air_unit());
 }
 
 TEST_CASE("A landed aircraft given an order takes off, climbs to its height and flies it",
@@ -269,23 +439,21 @@ TEST_CASE("A game saved while an aircraft comes down loads and goes on as the or
     CHECK(plane.layer() == "Land");
 }
 
-TEST_CASE("A landed aircraft refuels by itself, at its FuelRechargeRate; flying burns fuel",
+TEST_CASE("A landed aircraft refuels by itself, FuelRechargeRate / FuelUseTime / 100 a tick; "
+          "flying burns fuel",
           "[air_landing]") {
     World w;
     Unit& plane = *w.make("plane", 40.0f, 40.0f);
-    plane.set_fuel_use_time(100.0f);     // 1000 ticks a tank
-    plane.set_fuel_recharge_rate(10.0f); // 10% a second, landed
-    plane.set_fuel_ratio(0.5f);
+    plane.set_fuel_use_time(100.0f);
+    plane.set_fuel_recharge_rate(5.0f);
+    plane.set_fuel_ratio(0.2f);
     w.sim.tick();
-    CHECK(plane.fuel_ratio() < 0.5f); // up, it burns
+    CHECK(plane.fuel_ratio() < 0.2f);
     w.run_until([&] { return !plane.is_air_unit(); }, 300);
     REQUIRE(plane.vert_event() == "Bottom");
     const f32 down = plane.fuel_ratio();
-    for (int i = 0; i < 10; ++i) w.sim.tick();
-    // A second on the ground: 10 / 100 x 0.1 a tick, ten ticks.
-    CHECK(std::abs(plane.fuel_ratio() - std::min(down + 0.1f, 1.0f)) < 1e-4f);
     for (int i = 0; i < 100; ++i) w.sim.tick();
-    CHECK(plane.fuel_ratio() == 1.0f);
+    CHECK(std::abs(plane.fuel_ratio() - (down + 0.05f)) < 1e-4f);
 }
 
 TEST_CASE("An order while an aircraft comes down: it gives up its place, climbs back and flies "

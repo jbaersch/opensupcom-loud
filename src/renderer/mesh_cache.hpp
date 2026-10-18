@@ -1,10 +1,13 @@
 #pragma once
 
+#include "renderer/cartographic_technique.hpp"
 #include "renderer/vk_types.hpp"
 #include "core/types.hpp"
 #include "sim/entity.hpp"
 
+#include <array>
 #include <string>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -62,6 +65,10 @@ enum class MeshTechnique : u32 {
     CommandFeedback = 28,  ///< CommandFeedbackVS(0.7), CommandFeedbackPS0
     CommandFeedback2 = 29, ///< CommandFeedbackVS(1.1), CommandFeedbackPS0
     RallyPoint = 30,       ///< CommandFeedbackVS(0.7), CommandFeedbackPS0 unfaded
+    /// The map's border (MapBorderAdd): MapImagerPS0, the albedo lit by the
+    /// sun where the SpecTeam's blue doesn't mask it, glowing nowhere; then
+    /// MapImagerPS1, the glow alone.
+    MapImager = 31,
 };
 
 /// The order marks' techniques, drawn by the feedback pipeline.
@@ -159,10 +166,12 @@ inline ShieldPasses shield_passes(MeshTechnique t) {
 
 /// A technique with a depth stage (STAGE_DEPTH), which casts a shadow. Not
 /// AeonBuild or AlphaFade: a unit Aeon are building, and UEF's build
-/// slices, cast none (M211f/g); nor do shields (M211k).
+/// slices, cast none (M211f/g); nor do shields (M211k), nor the map's
+/// border (MapImager_LowFi is PREWATER + PREEFFECT alone).
 inline bool has_depth_stage(MeshTechnique t) {
     return t != MeshTechnique::AeonBuild && t != MeshTechnique::AlphaFade &&
-           t != MeshTechnique::UnitPlace && !is_shield_technique(t) && !is_feedback_technique(t);
+           t != MeshTechnique::UnitPlace && t != MeshTechnique::MapImager &&
+           !is_shield_technique(t) && !is_feedback_technique(t);
 }
 
 /// What a technique reads as its instance's material.y (its `parameter`
@@ -192,6 +201,9 @@ struct GPUMesh {
     std::string secondary_path; // VFS path to the LOD's SecondaryName (the build shaders')
     bool wreckage = false;      // drawn with the Wreckage shader: a unit's wreck mesh
     MeshTechnique technique = MeshTechnique::Unit;
+    /// What a cartographic view draws it with, at graphics fidelity 0, 1
+    /// and 2 (its shader's cartographicTechnique, by lane)
+    std::array<CartographicTechnique, 3> cartographic{};
     /// The mesh blueprint's SortOrder: Moho draws meshes by it, smallest
     /// first (MeshBatchKeyLess; M211k).
     f32 sort_order = 0.0f;
@@ -232,10 +244,10 @@ public:
     /// Get the full LODSet for introspection. Returns nullptr if not loaded.
     const LODSet* get_lod_set(const std::string& blueprint_id) const;
 
-    /// An SCM file drawn with `albedo` by `technique` (a UI world mesh's,
-    /// MeshName's), loaded once. Null if it can't be.
+    /// An SCM file drawn with `albedo` by the shader `shader` (a UI world
+    /// mesh's, MeshName's), loaded once. Null if it can't be.
     const GPUMesh* get_file(const std::string& scm_path, const std::string& albedo,
-                            MeshTechnique technique);
+                            const std::string& shader);
 
     /// The SCM file a blueprint's LOD 0 draws (empty without one).
     std::string mesh_file(const std::string& blueprint_id, lua_State* L) {
@@ -246,6 +258,16 @@ public:
     /// set with SetMesh is a mesh blueprint, which has no scale: the
     /// entity's own blueprint gives it.
     f32 blueprint_scale(const std::string& blueprint_id, lua_State* L);
+    /// A mesh blueprint's own UniformScale (RMeshBlueprint's; 1 without
+    /// one), which the map's border is drawn at (MapImager::AddBorder).
+    f32 mesh_uniform_scale(const std::string& mesh_bp_id, lua_State* L);
+
+    /// How far the mesh a blueprint draws with shows (lod_reach of its mesh
+    /// blueprint's LODs, minimap_meshes.hpp), cached: a unit's or prop's
+    /// Display.MeshBlueprint, or a mesh blueprint itself. 0 without one.
+    f32 lod_reach(const std::string& bp_id, lua_State* L);
+    /// A new map's blueprints: the reaches are read again.
+    void forget_reaches() { reach_cache_.clear(); }
 
     void destroy(VkDevice device, VmaAllocator allocator);
 
@@ -304,6 +326,14 @@ private:
 
     std::unordered_map<std::string, LODSet> lod_cache_;
     std::unordered_map<std::string, f32> scale_cache_;
+    std::unordered_map<std::string, f32> reach_cache_;
+    /// A mesh blueprint's LODs: each one's LODCutoff (none if it gives none)
+    /// and resolved ShaderName.
+    struct LodFields {
+        std::optional<f32> cutoff;
+        std::string shader;
+    };
+    std::vector<LodFields> read_lods(const std::string& mesh_bp_id, lua_State* L);
     std::unordered_set<std::string> failed_;
 
     VkDevice device_ = VK_NULL_HANDLE;

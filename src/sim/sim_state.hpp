@@ -181,6 +181,12 @@ public:
     /// the cells as CAiPathNavigator does. Off by default for now.
     bool moho_pathing() const { return moho_pathing_; }
     void set_moho_pathing(bool on) { moho_pathing_ = on; }
+    /// Whether the game runs on FAF's data, so the engine plays FAF's
+    /// patched exe (FA-Binary-Patches) where it changes Moho's rules:
+    /// ChangeUnitArmy gives commanders and units being built
+    /// (hooks/HTransferACUs.cpp). The host's, as the executable is.
+    bool faf_exe() const { return faf_exe_; }
+    void set_faf_exe(bool on) { faf_exe_ = on; }
     map::PathfindingGrid* pathfinding_grid() { return pathfinding_grid_.get(); }
     const map::PathfindingGrid* pathfinding_grid() const { return pathfinding_grid_.get(); }
 
@@ -366,11 +372,45 @@ public:
     u32 schedule_command(u32 source, const std::vector<u32>& unit_ids,
                          const UnitCommand& command, bool clear_existing);
 
-    /// The army a command source plays. A source with one moves only that
-    /// army's units: a peer can't order another's by naming them (a lockstep
-    /// frame is checked only against its sender). Unmapped sources (the
-    /// single-player player, the engine) are not limited.
+    /// The army a command source plays (-1: none, an observer's), for the
+    /// focus army it starts with. What it may command is the armies' command
+    /// sources (below).
     void set_source_army(u32 source, i32 army) { source_armies_[source] = army; }
+
+    // --- Command sources (Moho's SSTIArmyVariableData::mValidCommandSources) ---
+    /// The game numbers its command sources: from now on an army takes
+    /// orders and callbacks only from the sources it lists (none until
+    /// given), as Moho's armies do from their launch. Before it (a bare sim:
+    /// tests, tools) every source may act for every army.
+    void begin_command_sources();
+    bool command_sources_known() const { return command_sources_known_; }
+    /// Add or remove `source` among the ones `army` takes commands from
+    /// (FAF's SetCommandSource). Ignored for an army that doesn't exist.
+    void set_command_source(i32 army, u32 source, bool valid);
+    bool army_has_command_source(i32 army, u32 source) const;
+    /// `army`'s command sources, ascending.
+    std::vector<u32> army_command_sources(i32 army) const;
+    /// The source whose order or callback is running (Moho's
+    /// mCurCommandSource); kEngineSource (none) between them.
+    u32 current_command_source() const { return current_command_source_; }
+    /// Moho's Sim::OkayToMessWith(army): the running source may command
+    /// `army` -- one in the game that lists it -- or cheats are on. (Every
+    /// army, before the sources are known.)
+    bool okay_to_mess_with(i32 army);
+    /// A source left the game (Moho's OnCommandSourceTerminated): no army
+    /// takes its commands any more, and an army left with none is abandoned:
+    /// its brain's AbandonedByPlayer runs (retail's calls OnDefeat; FAF's may
+    /// share the army with allies instead). A brain without one is defeated
+    /// outright, as is (before the sources are known) the army the source
+    /// plays.
+    void terminate_command_source(u32 source);
+    /// The game's CheatsEnabled option.
+    void set_cheats_enabled(bool on) { cheats_enabled_ = on; }
+    /// Moho's Sim::CheatsEnabled: whether cheats are on, logging the running
+    /// source's attempt either way.
+    bool cheats_enabled();
+    /// Whether cheats are on, unlogged (the user session's copy of it).
+    bool cheats_option() const { return cheats_enabled_; }
 
     // --- A network game's pause (M218f), as Moho's sim takes it ---
     /// `source` asks to pause, at a tick every peer shares: taken unless
@@ -471,7 +511,8 @@ public:
     /// Whether `unit` takes `command` as it is issued: Moho checks each unit
     /// of an order and leaves out one that can't carry it out
     /// (func_ProcessUnitCommand). Checked here for Guard and Reclaim so far.
-    bool takes_command(const Unit& unit, const UnitCommand& command) const;
+    bool takes_command(const Unit& unit, const UnitCommand& command,
+                       bool clear_existing = false) const;
     /// Whether a live unit still has the command in its queue (IsCommandDone
     /// is its negation: a command is done once no unit holds it).
     bool command_queued(u32 command_id) const;
@@ -558,6 +599,9 @@ public:
     // Game end state
     bool game_ended() const { return game_ended_; }
     void set_game_ended(bool v) { game_ended_ = v; }
+    /// Moho's mGameOver: game_ended() latched as a tick ends. From then on
+    /// tick() runs no more (faf-re Sim::AdvanceBeat).
+    bool game_over() const { return game_over_; }
 
     /// Whether the scenario's scripts decide the game (retail and FAF fork
     /// /lua/victory.lua's CheckVictory from BeginSession): then they call
@@ -575,14 +619,8 @@ public:
     void set_fog_of_war(const std::string& mode);
     FogMode fog_mode() const { return fog_mode_; }
 
-    /// Common Army: allied (same-team) armies pool their mass/energy each tick,
-    /// so a teammate's reserves back up one that is stalling. Off by default.
-    void set_common_army(bool on) { common_army_ = on; }
-    bool common_army() const { return common_army_; }
-
     /// Team Share Overflow: resources a teammate would waste at full storage
-    /// flow to allies with room, instead of being lost. Off by default. Ignored
-    /// when Common Army is on (full pooling already covers it).
+    /// flow to allies with room, instead of being lost. Off by default.
     void set_team_share_overflow(bool on) { team_share_overflow_ = on; }
     bool team_share_overflow() const { return team_share_overflow_; }
 
@@ -801,6 +839,7 @@ public:
         std::string bank, cue, lod_cutoff;
         Vector3 pos;
         bool underwater = false; ///< a sub's or seabed unit's
+        u32 entity_id = 0;
     };
     void request_sound(SoundRequest r) { sound_requests_.push_back(std::move(r)); }
     const std::vector<SoundRequest>& sound_requests() const { return sound_requests_; }
@@ -930,7 +969,7 @@ private:
     }
 
     void update_economies();
-    /// Pool mass/energy across allied teams (Common Army). No-op unless enabled.
+    /// Pass allies' overflow on (Team Share Overflow). No-op unless enabled.
     void share_team_economy();
     /// Partition all non-civilian armies into alliance-connected teams.
     std::vector<std::vector<i32>> alliance_teams() const;
@@ -1029,6 +1068,10 @@ private:
     mutable u32 tick_checksum_tick_ = 0;
     mutable bool tick_checksum_valid_ = false;
     std::map<u32, i32> source_armies_; // see set_source_army
+    bool command_sources_known_ = false;         // see begin_command_sources
+    std::map<i32, std::set<u32>> army_sources_;  // army -> its command sources
+    u32 current_command_source_ = kEngineSource; // see current_command_source
+    bool cheats_enabled_ = false;
     i32 paused_by_ = -1;               // see request_pause
     u32 pause_serial_ = 0;
     u32 resumed_serial_ = 0; // the latest pause resumed
@@ -1047,6 +1090,7 @@ private:
     std::unique_ptr<PathTables> path_tables_;
     UnitBlockers unit_blockers_{*this};
     bool moho_pathing_ = false;
+    bool faf_exe_ = false; // see faf_exe
     /// Stored units whose carrier is gone, destroyed at a safe point of the
     /// tick (destroy_orphaned_stored_units).
     std::vector<u32> stored_to_destroy_;
@@ -1106,6 +1150,7 @@ private:
     u32 issuing_source_ = 0;
     u32 player_commands_issued_ = 0;
     bool game_ended_ = false;
+    bool game_over_ = false;
     bool script_victory_ = false;
     std::string victory_condition_ = "demoralization";
     VictoryMode victory_mode_ = VictoryMode::Demoralization;
@@ -1114,7 +1159,6 @@ private:
     FogMode fog_mode_ = FogMode::Explored;
     f32 no_rush_seconds_ = 0.0f;   // 0 = No Rush disabled
     f32 no_rush_radius_ = 75.0f;   // default confinement radius (game units)
-    bool common_army_ = false;     // pool allied economies when true
     bool team_share_overflow_ = false; // route wasted overflow to allies
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<CameraFollowEvent> camera_follow_events_;

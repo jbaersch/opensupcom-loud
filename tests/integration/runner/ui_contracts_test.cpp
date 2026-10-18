@@ -3391,6 +3391,10 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if not paused or SessionIsPaused() then error('pause not reported') end
     )");
 
+    // Moho's session is over before the UI hears it (CWldSession sets
+    // IsGameOver, then UI_NoteGameOver), and only then may a player watch
+    // as an observer
+    ctx.sim.set_game_ended(true);
     lua_ok("Test 9a: NoteGameOver requests observer focus", R"(
         import('/lua/ui/uimain.lua').NoteGameOver()
         if GetFocusArmy() == -1 then error('focus changed before the beat') end
@@ -3484,14 +3488,14 @@ void test_victory_flow(TestContext& ctx, const std::function<void(int)>& pump_fr
     lua_ok("Test 8: NoteGameOver moved the player to observer", R"(
         if GetFocusArmy() ~= -1 then error('focus army ' .. GetFocusArmy()) end
     )");
-    // Moho does not pause at game over: the world plays on until the
-    // player opens the score screen, which ends the session (SessionEndGame).
     const auto tick = ctx.sim.tick_count();
     play(5);
-    if (ctx.sim.tick_count() > tick)
-        spdlog::info("[PASS] Test 9: the game plays on after game over");
-    else
-        osc::test_status::fail("[FAIL] Test 9: the sim stopped at game over");
+    if (ctx.sim.tick_count() == tick) {
+        spdlog::info("[PASS] Test 9: the sim ticks no more after game over");
+    } else {
+        osc::test_status::fail("[FAIL] Test 9: the sim ran {} ticks after game over",
+                               ctx.sim.tick_count() - tick);
+    }
 
     // Retail's score threads (aibrain.lua CollectCurrentScores and
     // SyncCurrentScores) read the engine's army stats under Moho's names;
@@ -3723,12 +3727,12 @@ void test_uiboot(TestContext& ctx) {
             lua_getglobal(L, "_test_proj");
             if (lua_istable(L, -1)) {
                 lua_pushstring(L, "x");
-                lua_rawget(L, -2);
+                lua_gettable(L, -2);
                 ok = lua_isnumber(L, -1);
                 lua_pop(L, 1);
                 if (ok) {
                     lua_pushstring(L, "y");
-                    lua_rawget(L, -2);
+                    lua_gettable(L, -2);
                     ok = lua_isnumber(L, -1);
                     lua_pop(L, 1);
                 }

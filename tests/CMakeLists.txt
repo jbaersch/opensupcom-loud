@@ -57,6 +57,8 @@ add_executable(osc_tests
     test_primary_weapon_target.cpp
     test_target_recheck.cpp
     test_command_feedback.cpp
+    test_map_border.cpp
+    test_minimap_meshes.cpp
     test_seabed_layer.cpp
     test_raised_platforms.cpp
     test_favors_water.cpp
@@ -109,6 +111,7 @@ add_executable(osc_tests
     test_blueprint_loading.cpp
     test_map.cpp
     test_cartographic_math.cpp
+    test_cartographic_technique.cpp
     test_transport_slots.cpp
     test_influence_map.cpp
     test_jammer_fakes.cpp
@@ -147,6 +150,7 @@ add_executable(osc_tests
     test_camera_ground.cpp
     test_camera_basis.cpp
     test_camera_moves.cpp
+    test_camera_ortho.cpp
     test_window_mode.cpp
     test_console_vars.cpp
     test_team_color_lookup.cpp
@@ -155,6 +159,8 @@ add_executable(osc_tests
     test_mesh_technique.cpp
     test_playable_rect.cpp
     test_recon_view.cpp
+    test_vision_circles.cpp
+    test_world_shapes.cpp
     test_platoon_squads.cpp
     test_wave_stream.cpp
     test_emitter_params.cpp
@@ -189,6 +195,7 @@ add_executable(osc_tests
     test_url_bindings.cpp
     test_script_object.cpp
     test_veterancy_kills.cpp
+    test_unit_weapons.cpp
     test_quaternions.cpp
     test_category_match.cpp
     test_parse_category.cpp
@@ -198,7 +205,6 @@ add_executable(osc_tests
     test_checksum_coverage.cpp
     test_sha256.cpp
     test_platform_secrets.cpp
-    test_common_army.cpp
     test_handicap.cpp
     test_team_share_overflow.cpp
     test_lockstep.cpp
@@ -210,6 +216,7 @@ add_executable(osc_tests
     test_lobby_wire.cpp
     test_net_lobby.cpp
     test_command_routing.cpp
+    test_command_sources.cpp
     test_sim_rand.cpp
     test_video_decoder.cpp
 )

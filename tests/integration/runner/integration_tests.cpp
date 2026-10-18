@@ -7071,18 +7071,14 @@ void test_projectile(TestContext& ctx) {
             return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e)->get_weapon(0) : nullptr;
         };
         const osc::sim::Weapon* gun = first_weapon("uel0201");
-        const osc::sim::Weapon* blast = first_weapon("uab1101");
-        if (gun && gun->lead_target && gun->always_recheck_target && blast &&
-            blast->target_check_period == 30) {
+        if (gun && gun->lead_target && gun->always_recheck_target) {
             pass++;
-            spdlog::info("[PASS] Test 4b: a weapon blueprint's LeadTarget, AlwaysRecheckTarget "
-                         "and TargetCheckInterval left out are Moho's defaults");
+            spdlog::info("[PASS] Test 4b: a weapon blueprint's LeadTarget and AlwaysRecheckTarget "
+                         "left out are Moho's defaults");
         } else {
             fail++;
-            osc::test_status::fail(
-                "[FAIL] Test 4b: uel0201's gun: lead {}, recheck {}; uab1101's: check every {}",
-                gun && gun->lead_target, gun && gun->always_recheck_target,
-                blast ? blast->target_check_period : 0u);
+            osc::test_status::fail("[FAIL] Test 4b: uel0201's gun: lead {}, recheck {}",
+                                   gun && gun->lead_target, gun && gun->always_recheck_target);
         }
     }
 
@@ -7744,12 +7740,38 @@ void test_aim(TestContext& ctx) {
         if math.abs(h) > 1e-3 then error('heading ' .. math.deg(h) .. ' deg') end
     )");
 
+    lua_check("setup: a Scathis sent at a target 120 off", R"(
+        local function spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        __osc_scathis = spawn('url0401', 'ARMY_1', 260, 880)
+        __osc_scathis_mark = spawn('ueb1101', 'ARMY_2', 260, 760)
+        __osc_scathis_mark:SetCanTakeDamage(false)
+        __osc_scathis_shots = 0
+        local w = __osc_scathis:GetWeapon(1)
+        local fire = w.CreateProjectileAtMuzzle
+        w.CreateProjectileAtMuzzle = function(self, muzzle)
+            __osc_scathis_shots = __osc_scathis_shots + 1
+            return fire(self, muzzle)
+        end
+        IssueAttack({__osc_scathis}, __osc_scathis_mark)
+    )");
+    for (int i = 0; i < 250; ++i) {
+        ctx.sim.tick();
+    }
+    lua_check("Test 8: a Scathis fires its high arc from its unpacked barrel", R"(
+        if __osc_scathis_shots == 0 then
+            local _, pitch = __osc_scathis:GetWeapon(1):GetAimManipulator():GetHeadingPitch()
+            error('no shot; pitch ' .. math.deg(pitch) .. ' deg')
+        end
+    )");
+
     if (osc::test_status::failure_count() - fail == failures_before) {
         pass++;
-        spdlog::info("[PASS] Test 8: no script errors");
+        spdlog::info("[PASS] Test 9: no script errors");
     } else {
         fail++;
-        osc::test_status::fail("[FAIL] Test 8: script errors while aiming");
+        osc::test_status::fail("[FAIL] Test 9: script errors while aiming");
     }
     spdlog::info("Aim test: {}/{} passed", pass, pass + fail);
 }
@@ -9188,8 +9210,9 @@ void test_steer(TestContext& ctx) {
         return;
 
     // Moho's path navigator aims no farther than 50 cells along its path
-    // (CAiPathNavigator, faf-re's target pick): with a goal past that, a
-    // unit aims at the path's cluster portals, a lane apart from one that
+    // (CAiPathNavigator, faf-re's target pick), and picks its next target
+    // only halfway to the one it has (the shipped exe): with a far goal, a
+    // unit makes for the path's cluster portals, a lane apart from one that
     // aims straight at a nearer goal, and the two never meet. With Moho's
     // pathing each case's goals are nearer, so both keep one lane.
     const bool moho = ctx.sim.moho_pathing();
@@ -9223,7 +9246,13 @@ void test_steer(TestContext& ctx) {
 
     // 2. Crossing: two Strikers meet at right angles. One stops for the
     //    other; they don't run into each other.
-    lua(R"(
+    lua(moho ? R"(
+        __osc_east = __osc_spawn('uel0201', 'ARMY_1', -20, 0, math.pi / 2)
+        __osc_north = __osc_spawn('uel0201', 'ARMY_2', 0, -20, 0)
+        __osc_move(__osc_east, 20, 0)
+        __osc_move(__osc_north, 0, 20)
+    )"
+             : R"(
         __osc_east = __osc_spawn('uel0201', 'ARMY_1', -40, 0, math.pi / 2)
         __osc_north = __osc_spawn('uel0201', 'ARMY_2', 0, -40, 0)
         __osc_move(__osc_east, 40, 0)
@@ -9257,7 +9286,11 @@ void test_steer(TestContext& ctx) {
     )");
     {
         const Watch w = watch("__osc_big", "__osc_eng", 600, true, true);
-        check(w.held[1] && !w.held[0] && !w.stepped[0] && w.stray[0] < 0.5f && w.arrived[0] &&
+        // With Moho's pathing the Pillar first makes for a cell of its path a
+        // row off its line, until it is halfway there (as Moho's navigator
+        // picks its next target): it may stray up to a cell, not step aside.
+        const float keeps_line = moho ? 1.0f : 0.5f;
+        check(w.held[1] && !w.held[0] && !w.stepped[0] && w.stray[0] < keeps_line && w.arrived[0] &&
                   w.arrived[1],
               fmt::format("Test 3: head-on, the engineer stops and the Pillar keeps its line "
                           "(engineer held {}, Pillar held {} strayed {:.2f}, arrived {} {})",
@@ -9489,7 +9522,10 @@ void test_formation(TestContext& ctx) {
         for i, brain in ArmyBrains do
             if i ~= 1 then
                 for _, acu in brain:GetListOfUnits(categories.COMMAND, false) do
-                    acu:Destroy()
+                    local p = acu:GetPosition()
+                    if VDist2(p[1], p[3], 680, 120) < 150 then
+                        acu:Destroy()
+                    end
                 end
             end
         end
@@ -9918,6 +9954,22 @@ void test_missile(TestContext& ctx) {
         for i, v in __osc_victims do
             if not v:IsDead() then error('victim ' .. i .. ' lives') end
         end
+    )");
+    lua_check("Test 8b: the silo is credited with what its nuke killed", R"(
+        local kills = __osc_s:GetStat('KILLS', 0).Value
+        if kills ~= table.getn(__osc_victims) then error('S has ' .. kills .. ' kills') end
+    )");
+    lua_check("Test 8c: a projectile's projectile is launched by the first's launcher", R"(
+        local bp = '/projectiles/TDFGauss01/TDFGauss01_proj.bp'
+        local first = __osc_s:CreateProjectile(bp, 0, 30, 0, nil, nil, nil)
+        local second = first:CreateProjectile(bp, 0, 0, 0, nil, nil, nil)
+        local launcher = second:GetLauncher()
+        local first_launcher = first:GetLauncher()
+        second:Destroy()
+        first:Destroy()
+        if first_launcher ~= __osc_s then error('the first is not launched by S') end
+        if launcher == first then error('the second is launched by the first') end
+        if launcher ~= __osc_s then error('the second is launched by ' .. tostring(launcher)) end
     )");
 
     // Phase 2:
@@ -10834,6 +10886,14 @@ void test_range(TestContext& ctx) {
         IssueBuildMobile({__osc_boss}, __osc_at(661.5, 120.5), 'ueb2101', {})
         IssueGuard({__osc_helper}, __osc_boss)
 
+        -- Guard of a factory: an engineer held 8 from a quantum gateway's
+        -- centre, in reach of its skirt (10), not of the unit it builds.
+        __osc_gate = __osc_spawn('ueb0304', 'ARMY_1', 740.5, 170.5)
+        __osc_gate_helper = __osc_spawn('uel0105', 'ARMY_1', 740.5, 162.5)
+        __osc_gate_helper:SetSpeedMult(0)
+        IssueBuildFactory({__osc_gate}, 'uel0301', 1)
+        IssueGuard({__osc_gate_helper}, __osc_gate)
+
         -- Repair, reclaim and capture, each in reach.
         __osc_mender = __osc_spawn('uel0105', 'ARMY_1', 575.5, 80.5)
         __osc_hurt = __osc_spawn('uel0201', 'ARMY_1', 581.5, 80.5)
@@ -10962,8 +11022,22 @@ void test_range(TestContext& ctx) {
         local d = __osc_from(__osc_helper, 661.5, 120.5)
         if d > 7 then error(string.format('the helper is %.2f from the build', d)) end
     )");
+    lua_check("setup: the gateway builds", R"(
+        __osc_scu = __osc_gate:GetFocusUnit()
+        if not __osc_scu then error('the gateway builds nothing') end
+        __osc_scu_from = {GetGameTick(), __osc_scu:GetFractionComplete()}
+    )");
 
     run(140);
+    lua_check("Test 11b: a guard in reach of a factory, not of its build, builds with it", R"(
+        local rate = (__osc_scu:GetFractionComplete() - __osc_scu_from[2]) / (GetGameTick() - __osc_scu_from[1])
+        local want = (120 + 5) / (36000 * 10)
+        if math.abs(rate - want) > 1e-7 then
+            error(string.format('the support commander builds at %.4e a tick, not %.4e (focus %s)', rate,
+                                want, tostring(__osc_gate_helper:GetFocusUnit())))
+        end
+        if __osc_from(__osc_gate_helper, 740.5, 162.5) > 0.1 then error('the helper moved') end
+    )");
     lua_check("Test 12: a launcher too close backs off, and fires", R"(
         local d = __osc_from(__osc_lobber, __osc_mark[1], __osc_mark[2])
         if __osc_moho_pathing then

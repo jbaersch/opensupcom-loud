@@ -381,6 +381,15 @@ std::string string_field(lua_State* L, int idx, const char* key) {
     return out;
 }
 
+/// faf-re CWldSession::RenderStrategicIcons: the shield's toggle is off with
+/// its bit clear; the weapon's and special's never count.
+bool paused_or_off(const sim::EntityRecord& e) {
+    constexpr u16 kShield = 1u << 0;
+    constexpr u16 kOffWhenSet = 1u << 2 | 1u << 3 | 1u << 4 | 1u << 5 | 1u << 6 | 1u << 8;
+    return e.paused || (e.toggle_caps & kShield & ~e.script_bits) != 0 ||
+           (e.toggle_caps & kOffWhenSet & e.script_bits) != 0;
+}
+
 } // namespace
 
 const StrategicIconRenderer::IconBlueprint&
@@ -462,6 +471,7 @@ void StrategicIconRenderer::load_generic_icons(lua_State* L) {
     generic_land_ = std::string(kIconDirectory) + "icon_land_generic_rest.dds";
     generic_naval_ = std::string(kIconDirectory) + "icon_ship_generic_rest.dds";
     generic_air_ = std::string(kIconDirectory) + "icon_fighter_generic_rest.dds";
+    pause_ = std::string(kIconDirectory) + "pause_rest.dds";
     stunned_ = std::string(kIconDirectory) + "stunned_rest.dds";
     if (!L) return;
     const int top = lua_gettop(L);
@@ -480,6 +490,11 @@ void StrategicIconRenderer::load_generic_icons(lua_State* L) {
         take("Land", generic_land_);
         take("Naval", generic_naval_);
         take("Air", generic_air_);
+        push_field(L, module, "PauseIcons");
+        const std::string pause = lowered(string_field(L, lua_gettop(L), "PauseRest"));
+        if (!pause.empty()) {
+            pause_ = pause;
+        }
         push_field(L, module, "StunnedIcons");
         const std::string stunned = lowered(string_field(L, lua_gettop(L), "StunnedRest"));
         if (!stunned.empty()) stunned_ = stunned;
@@ -491,7 +506,7 @@ void StrategicIconRenderer::preload(const std::vector<std::string>& blueprint_id
                                     TextureCache& tex_cache, lua_State* L) {
     load_generic_icons(L);
     for (const std::string* path :
-         {&generic_structure_, &generic_land_, &generic_naval_, &generic_air_, &stunned_})
+         {&generic_structure_, &generic_land_, &generic_naval_, &generic_air_, &pause_, &stunned_})
         (void)tex_cache.get_blocking(*path);
     for (const std::string& id : blueprint_ids) {
         const IconBlueprint& bp = icon_blueprint(id, L);
@@ -540,10 +555,17 @@ StrategicIconRenderer::collect(const sim::FrameView& view,
         // A blip never seen has a generic icon; anything identified, its own.
         const bool identified = sight != Sight::Blip;
         if (identified && bp.rest.empty()) return;
+        const bool paused = (!recon_ || recon_->friendly(entity.army)) && paused_or_off(entity);
         // A drawn mesh keeps its icon until the camera is out past the
         // mesh's IconFadeInZoom; a blip, having none, shows its icon at
         // any zoom.
-        if (fade && shows_mesh(sight) && cam_dist < std::min(bp.fade_in_zoom, fade_cap)) return;
+        bool base = true;
+        if (fade && shows_mesh(sight) && cam_dist < std::min(bp.fade_in_zoom, fade_cap)) {
+            if (!paused) {
+                return;
+            }
+            base = false;
+        }
 
         f32 sx = 0;
         f32 sy = 0;
@@ -570,6 +592,8 @@ StrategicIconRenderer::collect(const sim::FrameView& view,
         icon.path = path;
         icon.tex = tex;
         icon.stunned = entity.stunned;
+        icon.paused = paused;
+        icon.base = base;
         // An identified unit's underlay (the objectives' rings), beneath it
         if (identified && !entity.strategic_underlay.empty()) {
             icon.underlay_path = &underlay_texture(entity.strategic_underlay);
@@ -692,14 +716,20 @@ void StrategicIconRenderer::projectile_marks(const sim::FrameView& view, lua_Sta
 template <class Emit>
 void StrategicIconRenderer::emit_runs(const Runs& runs, TextureCache& tex_cache, Emit&& emit) {
     // The underlay at its own colour, the base icon tinted over it, the
-    // stunned badge over that at its own colour (Moho's RenderUnitIcon).
+    // pause and stunned badges over that at their own (Moho's RenderUnitIcon).
+    const GPUTexture* pause = tex_cache.get(pause_);
     const GPUTexture* stunned = tex_cache.get(stunned_);
     for (const auto& run : runs) {
         for (const Icon& icon : run) {
             if (icon.underlay && icon.underlay->width > 0) {
                 emit(icon.x, icon.y, *icon.underlay_path, *icon.underlay, 1.0f, 1.0f, 1.0f);
             }
-            emit(icon.x, icon.y, *icon.path, *icon.tex, icon.r, icon.g, icon.b);
+            if (icon.base) {
+                emit(icon.x, icon.y, *icon.path, *icon.tex, icon.r, icon.g, icon.b);
+            }
+            if (icon.paused && pause && pause->width > 0) {
+                emit(icon.x, icon.y, pause_, *pause, 1.0f, 1.0f, 1.0f);
+            }
             if (icon.stunned && stunned && stunned->width > 0) {
                 emit(icon.x, icon.y, stunned_, *stunned, 1.0f, 1.0f, 1.0f);
             }
@@ -754,8 +784,8 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
         // An icon fades in with the camera out past its mesh's IconFadeInZoom
         // (no further than 0.89 of the farthest zoom, as Moho caps it).
         const f32 fade_cap = camera.max_zoom() * 0.89f;
-        const Runs runs =
-            collect(view, selected_ids, tex_cache, L, !always_, cam_dist, fade_cap, place);
+        const Runs runs = collect(view, selected_ids, tex_cache, L, !(always_ || forced_), cam_dist,
+                                  fade_cap, place);
         emit_runs(runs, tex_cache,
                   [&](f32 x, f32 y, const std::string& path, const GPUTexture& tex, f32 r, f32 g,
                       f32 b) { emit_icon(x, y, path, tex, r, g, b); });
@@ -849,16 +879,16 @@ void StrategicIconRenderer::paint_map(const sim::FrameView& view, const MapArea&
             std::copy(rect.begin(), rect.end(), inst.rect);
             inst.uv[1] = 1.0f;
             inst.uv[2] = 1.0f;
-            std::fill(std::begin(inst.color), std::end(inst.color), 1.0f);
+            std::fill(std::begin(inst.color), std::end(inst.color), -1.0f);
             out.push_back({inst, tex.descriptor_set});
         });
 }
 
 void StrategicIconRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w,
-                                   u32 viewport_h) {
+                                   u32 viewport_h, f32 scale) {
     if (uploaded_quad_count_ == 0) return;
 
-    f32 vp[2] = {static_cast<f32>(viewport_w), static_cast<f32>(viewport_h)};
+    f32 vp[2] = {static_cast<f32>(viewport_w) / scale, static_cast<f32>(viewport_h) / scale};
     vkc::push_constants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 2, vp);
 
     VkRect2D scissor{};

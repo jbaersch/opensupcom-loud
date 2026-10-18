@@ -429,6 +429,17 @@ OrderStep Unit::order_stop(lua_State* L) {
 }
 
 OrderStep Unit::order_move(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+    // Its move aborted by a Warp as it ran: Moho's move task hears it as a
+    // failure and the order ends, the unit coasting to a stop
+    if (warp_aborted_command_ != 0 && cmd.command_id == warp_aborted_command_) {
+        warp_aborted_command_ = 0;
+        command_queue_.pop_front();
+        if (is_air_unit() &&
+            (command_queue_.empty() || instant_order(command_queue_.front().type))) {
+            stop_air();
+        }
+        return OrderStep::Next;
+    }
     if (!navigator_.is_moving() || navigator_.goal().x != cmd.target_pos.x ||
         navigator_.goal().z != cmd.target_pos.z) {
         set_path_goal(cmd.target_pos, ctx);
@@ -760,57 +771,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
     auto& registry = ctx.registry;
     auto* L = ctx.L;
     const u32 order_id = cmd.command_id;
-    const auto friendly_site = [&](const Entity& entity) {
-        return entity.is_unit() && !entity.destroyed() &&
-               !static_cast<const Unit&>(entity).is_dying() &&
-               (entity.army() == army() || (ctx.sim && ctx.sim->is_ally(army(), entity.army()))) &&
-               entity.blueprint_id() == cmd.blueprint_id &&
-               entity.position().x == cmd.target_pos.x && entity.position().z == cmd.target_pos.z;
-    };
-    // A mobile build that joined an existing site keeps that identity until
-    // its order ends, including when the site completes or is cancelled.
-    // Reuse the normal construction-repair task for arms, grants and one
-    // completion callback; never turn a vanished site into another skeleton.
-    if (cmd.target_id != 0) {
-        const Entity* site = registry.find(cmd.target_id);
-        // Finishing the mobile build also ends a helper's order. Damage
-        // after completion must not turn it into a new repair task and
-        // hold up the helper's queued work.
-        const bool finished = site && site->is_unit() &&
-                              !static_cast<const Unit*>(site)->is_being_built() &&
-                              site->fraction_complete() >= 1.0f;
-        if (site && (!friendly_site(*site) || finished)) {
-            if (build_target_id_ == cmd.target_id) stop_assisting(L, &registry);
-            if (destroyed() || !in_registry()) return OrderStep::Gone;
-            if (command_queue_.empty() || &command_queue_.front() != &cmd ||
-                command_queue_.front().command_id != order_id)
-                return OrderStep::Next;
-            end_approach(cmd);
-            command_queue_.pop_front();
-            return OrderStep::Next;
-        }
-        return order_repair(cmd, dt, ctx, econ_eff);
-    }
     if (build_target_id_ == 0) {
-        // Several selected builders receive the same snapped mobile-build
-        // site. The first creates it; the others contribute their own work
-        // to it, rather than making overlapping copies. The spatial query
-        // returns entity-id order, so every peer chooses the same candidate.
-        const auto [fx, fz] = blueprint_footprint_cells(L, cmd.blueprint_id);
-        snap_structure_center(cmd.target_pos.x, cmd.target_pos.z, fx, fz);
-        Unit* shared = nullptr;
-        for (Entity* entity : registry.units_in_radius(cmd.target_pos.x, cmd.target_pos.z, 0.01f)) {
-            if (entity == this || !friendly_site(*entity)) continue;
-            auto& unit = static_cast<Unit&>(*entity);
-            if (unit.is_being_built() && unit.fraction_complete() < 1.0f) {
-                shared = &unit;
-                break;
-            }
-        }
-        if (shared) {
-            cmd.target_id = shared->entity_id();
-            return order_repair(cmd, dt, ctx, econ_eff);
-        }
         if (!cmd.site_cleared && cmd.clearing_prop_id == 0) {
             // The site, as the task takes it: snapped to the footprint's
             // cells (Moho's CUnitMobileBuildTask, as made). An order from
@@ -908,7 +869,16 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             command_queue_.pop_front();
             return OrderStep::Next;
         }
-        if (turns_to_face(cmd.target_pos) || awaits_arm() || waits_paused(cmd)) {
+        if (turns_to_face(cmd.target_pos)) {
+            return OrderStep::Hold;
+        }
+        if (!find_build_site_frame(registry, cmd.blueprint_id, cmd.target_pos) &&
+            build_site_taken(L, registry, cmd.blueprint_id, cmd.target_pos)) {
+            command_queue_.pop_front();
+            call_lua_method(L, "OnFailedToBuild");
+            return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+        }
+        if (awaits_arm() || waits_paused(cmd)) {
             return OrderStep::Hold;
         }
         const u32 building = cmd.command_id; // cmd may go with the scripts' changes
@@ -1891,9 +1861,10 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     // Help only within reach of the work (M206e): Moho's guard hands
     // it to a repair or reclaim task. A build, a silo or a repair
     // measures the gap to that unit's skirt (MaxBuildDistance to
-    // begin, twice that to go on); a reclaim, to its footprint. Out
-    // of reach, the unit walks just clear of the work, helping with
-    // nothing meanwhile.
+    // begin, twice that to go on; a factory's build begins at the
+    // factory's, as CUnitRepairTask takes its FACTORY creator); a
+    // reclaim, to its footprint. Out of reach, the unit walks just
+    // clear of the work, helping with nothing meanwhile.
     // Where a hovering aircraft flying its guard winged makes for (the work
     // it closes on, else what it guards): its one flight this tick, below.
     std::optional<Vector3> winged_goal;
@@ -1952,7 +1923,10 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     if (guarded_build && !guarded_build->destroyed()) {
         working = true;
         u32 target_build_id = target_unit->build_target_id();
-        if (!within_reach(*guarded_build, true, build_target_id_ == target_build_id)) {
+        const bool helping = build_target_id_ == target_build_id;
+        const Entity& reach =
+            !helping && target_unit->has_category("FACTORY") ? *target_unit : *guarded_build;
+        if (!within_reach(reach, true, helping)) {
             if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         } else {
             if (build_target_id_ != target_build_id) {

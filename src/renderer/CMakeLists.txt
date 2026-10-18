@@ -7,6 +7,8 @@ add_library(osc_renderer STATIC
     sky_renderer.cpp
     cartographic_renderer.cpp
     cartographic_math.cpp
+    cartographic_technique.cpp
+    cartographic_mesh_shaders.cpp
     mesh_cache.cpp
     texture_cache.cpp
     dds_parser.cpp
@@ -35,7 +37,6 @@ add_library(osc_renderer STATIC
     projectile_icon_renderer.cpp
     hud_renderer.cpp
     selection_info_renderer.cpp
-    fog_renderer.cpp
     playable_rect.cpp
     recon_view.cpp
     decal_math.cpp
@@ -45,11 +46,17 @@ add_library(osc_renderer STATIC
     beam_blueprint.cpp
     beam_renderer.cpp
     command_feedback.cpp
+    map_border.cpp
+    minimap_meshes.cpp
     command_graph_renderer.cpp
     world_quad_batch.cpp
     selection_renderer.cpp
     range_overlays.cpp
     range_renderer.cpp
+    stencil_volume.cpp
+    vision_renderer.cpp
+    boundary_renderer.cpp
+    world_shapes.cpp
     build_template.cpp
     effect_blueprint_file.cpp
     trail_blueprint.cpp

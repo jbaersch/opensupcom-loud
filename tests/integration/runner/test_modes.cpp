@@ -14,7 +14,9 @@
 #include "pathing_evidence_test.hpp"
 #include "movie_test.hpp"
 #include "combo_click_test.hpp"
+#include "command_sources_test.hpp"
 #include "edit_text_test.hpp"
+#include "hidpi_test.hpp"
 #include "integration_tests.hpp"
 #include "core/game_state.hpp"
 #include "core/log.hpp"
@@ -171,6 +173,12 @@ constexpr Mode kModesBefore[] = {
     {"--sky-test", test_sky, false},
     {"--cartographic-test", test_cartographic, false},
     {"--cartographic-minimap-test", test_cartographic_minimap, true},
+    {"--world-fog-test", test_world_fog, false},
+    {"--cartographic-main-test", test_cartographic_main, true},
+    {"--playable-boundary-test", test_playable_boundary, false},
+    {"--map-border-test", test_map_border, true},
+    {"--minimap-mesh-test", test_minimap_meshes, true},
+    {"--world-shapes-test", test_world_shapes, true},
     {"--skirt-render-test", test_skirt_render, false},
     {"--water-reflection-test", test_water_reflection, false},
     {"--refract-render-test", test_refract_render, false},
@@ -217,8 +225,10 @@ constexpr Mode kModesBefore[] = {
     {"--guard-engage-test", test_guard_engage, false},
     {"--rebuilder-guard-test", test_rebuilder_guard, false},
     {"--mobile-build-start-test", test_mobile_build_start, false},
+    {"--build-site-join-test", test_build_site_join, false},
     {"--drown-test", test_drown, false},
     {"--spawn-layer-test", test_spawn_layer, false},
+    {"--warp-test", test_warp, false},
     {"--attack-move-test", test_attack_move, false},
     {"--placement-layers-test", test_placement_layers, false},
     {"--yaw-only-test", test_yaw_only, false},
@@ -284,13 +294,13 @@ constexpr Mode kModesAfter[] = {
 
 /// Modes with code of their own (below), and the windowed ones.
 constexpr const char* kOwnModes[] = {
-    "--gameui-test",          "--victory-test",      "--audio-data-test",   "--lobby-flow-test",
-    "--dualstate-test",       "--construction-test", "--phase2-test",       "--phase3-test",
-    "--phase4-test",          "--phase5-test",       "--smoke-test",        "--draw-test",
-    "--stress-test",          "--full-smoke-test",   "--movie-test",        "--keymap-test",
-    "--session-command-test", "--keyboard-test",     "--camera-moves-test", "--window-test",
-    "--options-test",         "--lan-screen-test",   "--edit-text-test",    "--focus-army-test",
-    "--combo-click-test",
+    "--gameui-test",          "--victory-test",         "--audio-data-test",   "--lobby-flow-test",
+    "--dualstate-test",       "--construction-test",    "--phase2-test",       "--phase3-test",
+    "--phase4-test",          "--phase5-test",          "--smoke-test",        "--draw-test",
+    "--stress-test",          "--full-smoke-test",      "--movie-test",        "--keymap-test",
+    "--session-command-test", "--keyboard-test",        "--camera-moves-test", "--window-test",
+    "--options-test",         "--lan-screen-test",      "--edit-text-test",    "--focus-army-test",
+    "--combo-click-test",     "--command-sources-test", "--hidpi-test",
 };
 
 /// Runs the sim Lua state's `code`; false (logged) on an error.
@@ -316,8 +326,10 @@ void IntegrationModes::print_usage() const {
               << "  --economy-test     After ticks, log economy state for all armies\n"
               << "  --build-test       After ticks, build a T1 power gen near entity #1\n"
               << "  --mobile-build-start-test An engineer's build start, tick by tick, as the original\n"
+              << "  --build-site-join-test Builders sent to one site build one structure there\n"
               << "  --drown-test       Units made in water: a land tank drowns, as the original\n"
               << "  --spawn-layer-test Where a unit made by script stands: subs, ships, aircraft\n"
+              << "  --warp-test        Where Warp puts a unit: its layer, height and move\n"
               << "  --chain-test       Full build chain: ACU -> factory -> engineer -> pgen\n"
               << "  --ai-test          AI ARMY_2: pgens + factory + engineers + guard assist\n"
               << "  --reclaim-test     Create prop, engineer reclaims it, verify mass gained\n"
@@ -398,6 +410,10 @@ void IntegrationModes::print_usage() const {
               << "  --sky-test         FA's sky dome: the map's block, atmosphere, cull, decals, cirrus\n"
               << "  --cartographic-test The minimap's cartographic frame, against cartographic.fx\n"
               << "  --cartographic-minimap-test A cartographic minimap view draws that frame\n"
+              << "  --world-fog-test   The fog of war over the world, as Moho draws it\n"
+              << "  --cartographic-main-test  A cartographic main view: the map, orthographic\n"
+              << "  --playable-boundary-test  Outside a smaller playable rect, the world black\n"
+              << "  --world-shapes-test FAF's OnRenderWorld draws its shapes in the world\n"
               << "  --skirt-render-test The terrain's skirt below the map's edges (TTerrainSkirt)\n"
               << "  --water-reflection-test Units reflected in the water; meshes drawn after it\n"
               << "  --refract-render-test FA's refracting particles: the frame behind, displaced\n"
@@ -466,10 +482,13 @@ void IntegrationModes::print_usage() const {
               << "  --count-marks <N>  Run N frames; fail if no order's mark (feedback blip) is drawn\n"
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
               << "  --focus-army-test  A launch's player in the second slot plays and watches it\n"
+              << "  --command-sources-test A launch's player commands its army; FAF's union and common armies\n"
               << "  --lan-screen-test  Retail's LAN screen finds a game hosted here (M218b)\n"
               << "  --movie-test       The splash's movies to the main menu; movie playback and drawing\n"
               << "  --edit-text-test   Retail's name dialog draws a non-ASCII name typed in\n"
               << "  --combo-click-test A combo's list closes on a click outside; Cancel clicks\n"
+              << "  --hidpi-test       The UI in points on a Retina frame, at twice the pixels;\n"
+              << "                     with --map, the minimap window's map\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
               << "  --scissor-test     Scissor/clip rectangles (parent-child clipping)\n"
@@ -519,7 +538,8 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
                         has("--combat-test") || has("--persist-test");
     request.world_ui = has("--gameui-test") || has("--victory-test") || has("--keymap-test") ||
                        has("--session-command-test") || has("--keyboard-test") ||
-                       has("--camera-moves-test") || has("--window-test") || has("--options-test");
+                       has("--camera-moves-test") || has("--window-test") ||
+                       has("--options-test") || has("--hidpi-test");
     request.splash = has("--movie-test");
     // --render-dump compares renders; its scene's script errors are logged,
     // not counted, so a dump is still written.
@@ -583,6 +603,10 @@ std::optional<int> IntegrationModes::front_end(Engine& e) {
         }
         osc::test::run_edit_text_test(e);
         return finish_test_run("edit-text-test");
+    }
+    if (has("--hidpi-test") && e.map_path.empty()) {
+        osc::test::run_hidpi_test(e);
+        return finish_test_run("hidpi-test");
     }
     const auto& map_path = e.map_path;
     auto& ui_lua_state = e.ui_lua_state;
@@ -879,6 +903,10 @@ std::optional<int> IntegrationModes::headless_first(Engine& e) {
         }
         return finish_test_run("focus-army-test");
     }
+    if (has("--command-sources-test") && !map_path.empty()) {
+        osc::test::run_command_sources_test(e);
+        return finish_test_run("command-sources-test");
+    }
 
     // === Full Smoke Test: 5-phase game lifecycle ===
     if (full_smoke_test && !map_path.empty()) {
@@ -1166,6 +1194,7 @@ std::optional<int> IntegrationModes::headless_first(Engine& e) {
 
         osc::i32 peak_entities = 0;
         osc::i32 tick_target = 10000;
+        bool result_noted = false;
 
         for (osc::i32 t = 0; t < tick_target; t++) {
             sim_state->tick();
@@ -1184,10 +1213,10 @@ std::optional<int> IntegrationModes::headless_first(Engine& e) {
 
             // Check game-over — continue tracking but note it
             osc::i32 result = sim_state->player_result();
-            if (result != 0 && !sim_state->game_ended()) {
+            if (result != 0 && !result_noted) {
                 const char* result_str = result == 1 ? "VICTORY" : result == 2 ? "DEFEAT" : "DRAW";
                 spdlog::info("  Game over at tick {}: {}", t + 1, result_str);
-                sim_state->set_game_ended(true);
+                result_noted = true;
             }
         }
 
@@ -1239,6 +1268,7 @@ void IntegrationModes::headless(Engine& e) {
     const bool camera_moves_test = has("--camera-moves-test");
     const bool window_test = has("--window-test");
     const bool options_test = has("--options-test");
+    const bool hidpi_test = has("--hidpi-test");
     const bool dualstate_test = has("--dualstate-test");
     const bool construction_test = has("--construction-test");
     const bool phase2_test = has("--phase2-test");
@@ -1246,7 +1276,7 @@ void IntegrationModes::headless(Engine& e) {
     const bool phase4_test = has("--phase4-test");
     const bool phase5_test = has("--phase5-test");
     if ((gameui_test || victory_test || keymap_test || session_command_test || keyboard_test ||
-         camera_moves_test || window_test || options_test) &&
+         camera_moves_test || window_test || options_test || hidpi_test) &&
         !map_path.empty()) {
         // Selection is input-handler state; a headless one lets the test
         // select units (SelectUnits) and drive the selection UI.
@@ -1328,6 +1358,9 @@ void IntegrationModes::headless(Engine& e) {
             osc::test::test_camera_moves(ui_test_ctx, test_ctx, pump, play, sim_lua);
         if (window_test) osc::test::test_window(ui_test_ctx, test_ctx, pump);
         if (options_test) osc::test::test_options(ui_test_ctx, test_ctx, pump);
+        if (hidpi_test) {
+            osc::test::run_hidpi_minimap_test(ui_test_ctx, pump);
+        }
         if (victory_test) {
             osc::test::test_victory_flow(ui_test_ctx, pump, play, sim_lua);
         }

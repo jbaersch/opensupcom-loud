@@ -16,7 +16,9 @@ add_executable(osc_integration
     runner/wave_test.cpp
     runner/movie_test.cpp
     runner/combo_click_test.cpp
+    runner/command_sources_test.cpp
     runner/edit_text_test.cpp
+    runner/hidpi_test.cpp
     runner/keymap_test.cpp
     runner/pathing_evidence_test.cpp
     runner/camera_moves_test.cpp
@@ -58,9 +60,17 @@ add_executable(osc_integration
     runner/water_render_test.cpp
     runner/sky_test.cpp
     runner/cartographic_test.cpp
+    runner/world_fog_test.cpp
+    runner/cartographic_main_test.cpp
+    runner/playable_boundary_test.cpp
+    runner/map_border_test.cpp
+    runner/minimap_mesh_test.cpp
+    runner/world_shapes_test.cpp
     runner/mobile_build_start_test.cpp
+    runner/build_site_join_test.cpp
     runner/drown_test.cpp
     runner/spawn_layer_test.cpp
+    runner/warp_test.cpp
     runner/skirt_render_test.cpp
     runner/shield_render_test.cpp
     runner/mesh_capacity_test.cpp
@@ -190,6 +200,14 @@ endforeach()
 foreach(mode IN LISTS OSC_DATA_TESTS_NO_MAP_RETAIL_GAP)
     osc_add_data_test(${mode} retail-gap NO_MAP)
 endforeach()
+# --hidpi-test in FA's game interface, its minimap window shown as the golden's
+add_test(NAME data.minimap.hidpi-test
+         COMMAND osc_integration --map ${OSC_TEST_MAP} --hidpi-test
+                 --prefs ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/minimap.prefs)
+set_tests_properties(data.minimap.hidpi-test PROPERTIES
+    LABELS "data;gate"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 900)
 
 # M196: the same game, played twice as two processes (every address
 # different), stays identical tick for tick -- nothing depends on hash
@@ -344,6 +362,23 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 1200)
+    # FAF's union and common armies on FAF's own scripts: SetCommandSource,
+    # MergeArmyPair and AbandonedByPlayer (the retail run is a gate mode).
+    # Without FAF data it skips, as the saves' do: registered either way,
+    # so every machine counts the same gate.
+    if(_osc_faf_data)
+        add_test(NAME data.command_sources_faf
+                 COMMAND osc_integration --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP}
+                         --command-sources-test)
+    else()
+        add_test(NAME data.command_sources_faf
+                 COMMAND ${Python3_EXECUTABLE} -c
+                         "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
+    endif()
+    set_tests_properties(data.command_sources_faf PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
 
     # M199b: retail's replay dialog path -- GetSpecialFiles lists the
     # recording, LaunchReplaySession opens it -- and the game plays it to

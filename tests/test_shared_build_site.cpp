@@ -54,7 +54,7 @@ struct SharedBuildWorld {
         store.expose_to_lua(lua.raw());
         REQUIRE(lua.do_string(R"(
             SitesCreated, SitesCompleted = 0, 0
-            BuilderStarts, BuilderStops = 0, 0
+            BuilderStarts, BuilderStops, BuilderFailures = 0, 0, 0
             SiteClass = setmetatable({
                 OnCreate = function(self) SitesCreated = SitesCreated + 1 end,
                 OnStopBeingBuilt = function(self) SitesCompleted = SitesCompleted + 1 end,
@@ -63,6 +63,7 @@ struct SharedBuildWorld {
             BuilderClass = setmetatable({
                 OnStartBuild = function(self) BuilderStarts = BuilderStarts + 1 end,
                 OnStopBuild = function(self) BuilderStops = BuilderStops + 1 end,
+                OnFailedToBuild = function(self) BuilderFailures = BuilderFailures + 1 end,
             }, {__index = moho.unit_methods})
             BuilderClass.__index = BuilderClass
         )")
@@ -260,7 +261,8 @@ TEST_CASE("A shared mobile build ends on completion even if its finished site is
     CHECK(world.lua.do_string("assert(BuilderStops == 2)").ok());
 }
 
-TEST_CASE("Joining a site respects allegiance, blueprint and completion", "[build][shared-site]") {
+TEST_CASE("Joining a site leaves army rejection to scripts and respects blueprint and completion",
+          "[build][shared-site]") {
     SharedBuildWorld world;
     auto* first = world.builder(10, 12, 1);
     auto* helper = world.builder(20, 14);
@@ -271,7 +273,9 @@ TEST_CASE("Joining a site respects allegiance, blueprint and completion", "[buil
         world.sim.set_alliance(0, 1, osc::sim::Alliance::Ally);
         should_join = true;
     }
-    SECTION("enemy unfinished site") {}
+    SECTION("enemy unfinished site without a rejecting script") {
+        should_join = true;
+    }
     SECTION("different blueprint") {
         world.sim.set_alliance(0, 1, osc::sim::Alliance::Ally);
         different_blueprint = true;
@@ -291,6 +295,11 @@ TEST_CASE("Joining a site respects allegiance, blueprint and completion", "[buil
     world.build({helper});
     world.tick(8);
     CHECK((helper->build_target_id() == original->entity_id()) == should_join);
+    CHECK(world.sites().size() == 1);
+    if (!should_join) {
+        CHECK(helper->command_queue().empty());
+        CHECK(world.lua.do_string("assert(BuilderFailures == 1)").ok());
+    }
 }
 
 TEST_CASE("An aborted shared site does not leave helpers spawning replacements",
@@ -312,4 +321,38 @@ TEST_CASE("An aborted shared site does not leave helpers spawning replacements",
     CHECK(first->command_queue().empty());
     CHECK(helper->command_queue().empty());
     CHECK(world.lua.do_string("assert(SitesCreated == 1 and SitesCompleted == 0)").ok());
+}
+
+TEST_CASE("A script may reject joining another army's build without removing its frame",
+          "[build][shared-site]") {
+    SharedBuildWorld world;
+    auto* first = world.builder(10, 12, 1);
+    auto* helper = world.builder(20, 14);
+    world.build({first});
+    world.tick(8);
+    REQUIRE(world.sites().size() == 1);
+    auto* site = world.sites()[0];
+    lua_rawgeti(world.lua.raw(), LUA_REGISTRYINDEX, helper->lua_table_ref());
+    lua_setglobal(world.lua.raw(), "RejectingBuilder");
+    REQUIRE(world.lua
+                .do_string(R"(
+        RejectedStarts = 0
+        function RejectingBuilder:OnStartBuild(target, order)
+            assert(order == 'MobileBuild')
+            RejectedStarts = RejectedStarts + 1
+            self:Stop()
+        end
+    )")
+                .ok());
+    world.build({helper});
+    world.tick(8);
+    CHECK(world.lua.do_string("assert(RejectedStarts == 1)").ok());
+    CHECK(helper->command_queue().empty());
+    CHECK_FALSE(helper->is_building());
+    CHECK(world.sites().size() == 1);
+    CHECK(site->army() == 1);
+    const float before = site->fraction_complete();
+    world.tick();
+    CHECK(site->fraction_complete() - before == Catch::Approx(10.0f / 1000.0f * 0.1f));
+    CHECK(world.sim.get_army(0)->economy().mass.requested == 0);
 }

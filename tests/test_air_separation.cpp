@@ -80,7 +80,7 @@ void check_circling(const Unit& unit) {
 
 } // namespace
 
-TEST_CASE("Nearby attacking gunships retain air separation while circling without a navigator",
+TEST_CASE("Nearby attacking gunships circle without pushing each other away",
           "[air][air-separation]") {
     AirWorld alone;
     auto* reference = alone.gunship({8, 10, 32});
@@ -94,12 +94,13 @@ TEST_CASE("Nearby attacking gunships retain air separation while circling withou
     together.sim.tick();
     check_circling(*first);
     check_circling(*second);
-    // The controller is identical; only the nearby aircraft differs. The
-    // existing avoidance force must still act in this navigation-free mode.
-    CHECK(distance(first->position(), reference->position()) > 0.2f);
+    // Moho aircraft pass through one another in flight (upstream #693).
+    // A neighbor must not change the flight controller's displacement.
+    CHECK(distance(first->position(), reference->position()) == 0);
+    CHECK(first->position().y == reference->position().y);
 }
 
-TEST_CASE("Coincident air separation uses the existing deterministic entity-id direction",
+TEST_CASE("Coincident aircraft retain their flight path deterministically",
           "[air][air-separation]") {
     AirWorld reference;
     auto* flight = reference.gunship({8, 10, 32});
@@ -110,7 +111,7 @@ TEST_CASE("Coincident air separation uses the existing deterministic entity-id d
         AirWorld world;
         auto* first = world.gunship({8, 10, 32});
         // Place the neighbor exactly where the first aircraft's controller
-        // finishes this tick, exercising the zero-distance avoidance branch.
+        // finishes this tick, exercising exact coincidence.
         auto* parked = world.gunship(after_flight, false);
         parked->set_immobile(true);
         world.sim.tick();
@@ -119,8 +120,8 @@ TEST_CASE("Coincident air separation uses the existing deterministic entity-id d
         CHECK(std::isfinite(at.x));
         CHECK(std::isfinite(at.y));
         CHECK(std::isfinite(at.z));
-        // Lower id goes east, as the ground resolver's coincident pair does.
-        CHECK(at.x - after_flight.x == Catch::Approx(3.0f * 0.1f));
+        // No artificial entity-id displacement is added to the flight.
+        CHECK(at.x == after_flight.x);
         CHECK(at.z == after_flight.z);
         CHECK(parked->position().x == after_flight.x);
         CHECK(parked->position().z == after_flight.z);

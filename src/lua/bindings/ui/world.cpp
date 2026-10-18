@@ -4,6 +4,7 @@
 
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
+#include "renderer/camera.hpp"
 #include "renderer/input_handler.hpp"
 #include "lua/lua_stubs.hpp"
 #include "core/dmath.hpp"
@@ -406,11 +407,25 @@ static int worldview_LockInput(lua_State* L) {
 
 static int worldview_SetCartographic(lua_State* L) {
     auto* wv = check_world_view(L);
-    if (wv && lua_isboolean(L, 2))
-        wv->set_cartographic(lua_toboolean(L, 2) != 0);
+    if (wv && lua_isboolean(L, 2)) {
+        const bool on = lua_toboolean(L, 2) != 0;
+        wv->set_cartographic(on);
+        // CUIWorldView::SetOrthographic: the view's camera goes orthographic
+        // and stops shaking. Every view here shares the renderer's camera,
+        // and the minimap draws its own frame (cartographic_minimap), so
+        // only a main view's turns it.
+        if (!wv->is_minimap() && wv->camera()) wv->camera()->set_ortho(on);
+    }
     return 0;
 }
-static int worldview_SetCustomRender(lua_State* /*L*/) { return 0; }
+// worldview:SetCustomRender(bool): FAF's patched game's (WorldView.cpp,
+// DrawFunc.cpp): on, the view's OnRenderWorld(self, delta) runs each frame
+// as the world is drawn, and may draw with UI_DrawLine and its kin.
+static int worldview_SetCustomRender(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (wv) wv->set_custom_render(lua_toboolean(L, 2) != 0);
+    return 0;
+}
 
 static int worldview_SetHighlightEnabled(lua_State* L) {
     auto* wv = check_world_view(L);

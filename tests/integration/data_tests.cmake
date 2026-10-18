@@ -39,8 +39,8 @@ set(OSC_DATA_TESTS_GATE
     economy-test edit-render-test edit-test effect-intel-test emitter-test enhance-test
     script-order-test
     gameui-test impact-test influence-test issue-handles-test
-    enhance-wreck-test factory-assist-test factory-rally-test ferry-test fire-test flags-test formation-test font-test fow-test guard-engage-test rebuilder-guard-test mobile-build-start-test drown-test spawn-layer-test
-    feedback-render-test focus-army-test footfall-test full-smoke-test ghost-render-test hull-facing-test
+    enhance-wreck-test factory-assist-test factory-rally-test ferry-test fire-test flags-test formation-test font-test fow-test guard-engage-test rebuilder-guard-test mobile-build-start-test build-site-join-test drown-test spawn-layer-test warp-test
+    feedback-render-test focus-army-test command-sources-test footfall-test full-smoke-test ghost-render-test hull-facing-test
     input-test intel-field-test intel-overlay-test intel-test interp-test itemlist-render-test
     economy-overlay-test jammer-blip-test jammer-test keyboard-test keymap-test
     layercap-test lighting-test los-test map-parse-test wave-test material-test bloom-test build-shader-test effect-mesh-test skinning-test prop-material-test clipped-shadow-test shadow-map-test lowstub-test manip-test massstub-test massstub2-test missile-test
@@ -49,7 +49,7 @@ set(OSC_DATA_TESTS_GATE
     patrol-test persist-test platoon-test prebuilt-test profile-test projectile-test prop-test range-render-test range-test reclaim-test refract-render-test
     runtime-decal-test terrain-normal-render-test
     repair-test resource-icon-render-test right-click-test scale-test scissor-test scroll-render-test scrollbar-render-test selection-render-test session-command-test shadow-test
-    mesh-capacity-test shield-render-test shield-test silo-test sky-test cartographic-test cartographic-minimap-test skirt-render-test smoke-test spatial-test strata-test
+    mesh-capacity-test shield-render-test shield-test silo-test sky-test cartographic-test cartographic-minimap-test cartographic-main-test playable-boundary-test map-border-test minimap-mesh-test world-fog-test world-shapes-test skirt-render-test smoke-test spatial-test strata-test
     specular-test stall-test stats-test shore-test steer-test strategic-icon-test stress-test stub-test targeting-test
     teamcolor-test
     terrain-normal-test terrain-tex-test text-test threat-test trail-render-test
@@ -64,7 +64,7 @@ set(OSC_DATA_TESTS_RETAIL_GAP
 
 # Front-end flows that must boot without --map.
 set(OSC_DATA_TESTS_NO_MAP_GATE
-    audio-data-test combo-click-test edit-text-test lan-screen-test lobby-flow-test movie-test
+    audio-data-test combo-click-test edit-text-test hidpi-test lan-screen-test lobby-flow-test movie-test
 )
 set(OSC_DATA_TESTS_NO_MAP_RETAIL_GAP
 )

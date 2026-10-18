@@ -10,6 +10,7 @@
 #include "lua/game_mods.hpp"
 #include "sim/lua_bytes.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/sim_sync.hpp"
 #include "core/game_state.hpp"
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
@@ -869,12 +870,20 @@ static int l_GetFocusArmy(lua_State* L) {
     return 1;
 }
 
+/// SetFocusArmy(army): FAF's sim one (its exe patch), 0-based, -1 an
+/// observer: this client watches and plays `army` from the next beat, as
+/// the UI's does (simInit's MergeArmyPair moves a merged player's focus).
 static int l_SetFocusArmy(lua_State* L) {
-    int army = static_cast<int>(luaL_checknumber(L, 1));
-    lua_pushstring(L, "__osc_focus_army");
-    lua_pushnumber(L, army > 0 ? army - 1 : army);
+    auto* sim = get_sim(L);
+    const lua_Number army = luaL_checknumber(L, 1);
+    // (Moho's takes any number; one past the armies would be no army)
+    if (!(army >= -1 && (!sim || army < static_cast<lua_Number>(sim->army_count())))) {
+        spdlog::warn("SetFocusArmy({}): no such army", army);
+        return 0;
+    }
+    lua_pushstring(L, kFocusArmyRequestKey);
+    lua_pushnumber(L, static_cast<int>(army));
     lua_rawset(L, LUA_REGISTRYINDEX);
-    spdlog::debug("SetFocusArmy: {}", army);
     return 0;
 }
 
@@ -926,7 +935,8 @@ static int l_GetEntityById(lua_State* L) {
 
 static int l_Warp(lua_State* L) {
     // Warp(entity, position, [orientation]) — FA's teleport: the entity
-    // jumps to its new pose rather than being drawn sliding there.
+    // jumps to its new pose rather than being drawn sliding there. A unit
+    // lands on the layer and height a unit made there would (Unit::Warp).
     auto* sim = get_sim(L);
     if (!sim) return 0;
 
@@ -950,10 +960,11 @@ static int l_Warp(lua_State* L) {
         lua_rawgeti(L, 2, 3);
         v.z = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
-        entity->set_position(v);
-        entity->note_snap();
         if (entity->is_unit()) {
-            static_cast<sim::Unit*>(entity)->reset_lift_ground();
+            static_cast<sim::Unit*>(entity)->warp(sim->terrain(), v);
+        } else {
+            entity->set_position(v);
+            entity->note_snap();
         }
     }
     // Orientation is a quaternion {x, y, z, w}, as GetOrientation returns it.
@@ -1764,7 +1775,6 @@ static int l_sim_ResumeSim(lua_State* L) {
 // Stub functions — shared definitions in lua_stubs.hpp, local aliases for brevity
 #include "lua/lua_stubs.hpp"
 static int (*const stub_noop)(lua_State*) = lua_stubs::noop;
-static int (*const stub_zero)(lua_State*) = lua_stubs::return_zero;
 static int (*const stub_nil)(lua_State*) = lua_stubs::return_nil;
 
 // Returns a dummy object (table) whose methods are no-ops that return self
@@ -1836,13 +1846,48 @@ static int l_IsCollisionBeam(lua_State* L) {
     return 1;
 }
 
-/// OkayToMessWithArmy(army): may the current command source act for this
-/// army (give resources, self-destruct, ...)? Without a network command
-/// source every script-side request comes from the local player, which the
-/// engine already allows for every army it controls; lockstep multiplayer
-/// validates the issuing source before a SimCallback runs.
+/// OkayToMessWithArmy(army): may the running command source act for the
+/// army (give resources, self-destruct, ...)? Moho's: it is in the game and
+/// takes that source's commands, or cheats are on. No such army: false.
 static int l_OkayToMessWithArmy(lua_State* L) {
-    lua_pushboolean(L, 1);
+    auto* sim = get_sim(L);
+    if (lua_gettop(L) != 1) return luaL_error(L, "OkayToMessWithArmy(army) takes 1 argument");
+    const i32 army = resolve_army(L, 1, sim);
+    lua_pushboolean(L, sim && sim->get_army(army) && sim->okay_to_mess_with(army) ? 1 : 0);
+    return 1;
+}
+
+/// GetCurrentCommandSource(): the running command source (1-based), or nil
+/// outside a source's order or callback.
+static int l_GetCurrentCommandSource(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim || sim->current_command_source() == sim::kEngineSource) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushnumber(L, static_cast<lua_Number>(sim->current_command_source()) + 1);
+    return 1;
+}
+
+/// SetCommandSource(army, source, valid): FAF's (its exe patch
+/// SimSetCommandSource), both 0-based: `army` takes `source`'s commands, or
+/// no longer does. Its union and common armies share control by it.
+static int l_SetCommandSource(lua_State* L) {
+    auto* sim = get_sim(L);
+    const lua_Number army = lua_tonumber(L, 1);
+    const lua_Number source = lua_tonumber(L, 2);
+    // (A NaN or a number out of range names no army or source)
+    if (!sim || !(army >= 0 && army < 1e6) || !(source >= 0 && source < 1e6)) return 0;
+    sim->set_command_source(static_cast<i32>(army), static_cast<u32>(source),
+                            lua_toboolean(L, 3) != 0);
+    return 0;
+}
+
+/// CheatsEnabled(): whether the game allows cheats, logging the attempt
+/// either way, as Moho's does.
+static int l_CheatsEnabled(lua_State* L) {
+    auto* sim = get_sim(L);
+    lua_pushboolean(L, sim && sim->cheats_enabled() ? 1 : 0);
     return 1;
 }
 
@@ -4845,8 +4890,10 @@ static int l_NotifyUpgrade(lua_State* L) {
 // ChangeUnitArmy(unit, army): Moho's cfunc_ChangeUnitArmyL. The unit (and
 // what it carries) changes army by replacement; returns the new unit, or
 // nil. A unit already of that army is an error; a commander, a unit being
-// built or one carrying a commander stays as it is (nil). FAF's exe drops the
-// first two (FA-Binary-Patches hooks/HTransferACUs.cpp).
+// built or one carrying a commander stays as it is (nil). FAF's exe gives the
+// first two (FA-Binary-Patches hooks/HTransferACUs.cpp NOPs that refusal), a
+// unit being built as a complete one; FAF's Lua refuses commanders again
+// unless its third argument, noRestrictions, is set (SimHooks.lua).
 static int l_ChangeUnitArmy(lua_State* L) {
     if (lua_gettop(L) != 2)
         return luaL_error(L, "ChangeUnitArmy(unit, army)\n  expected 2 args, but got %d",
@@ -4862,7 +4909,7 @@ static int l_ChangeUnitArmy(lua_State* L) {
     if (army < 0 || army >= static_cast<int>(sim->army_count()))
         return luaL_error(L, "Invalid army %d", static_cast<int>(lua_tonumber(L, 2)));
     if (unit->army() == army) return luaL_error(L, "Unit already belongs to army %d", army);
-    if (unit->is_being_built() || unit->has_category("COMMAND")) {
+    if (!sim->faf_exe() && (unit->is_being_built() || unit->has_category("COMMAND"))) {
         lua_pushnil(L);
         return 1;
     }
@@ -5522,6 +5569,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IsProjectile", l_IsProjectile);
     state.register_function("IsCollisionBeam", l_IsCollisionBeam);
     state.register_function("OkayToMessWithArmy", l_OkayToMessWithArmy);
+    state.register_function("CheatsEnabled", l_CheatsEnabled);
     state.register_function("GetCueBank", l_GetCueBank);
     state.register_function("SetIgnoreArmyCap", l_SetIgnoreArmyCap);
     state.register_function("TryCopyPose", l_TryCopyPose);
@@ -5697,7 +5745,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("SetAllianceOneWay", l_SetAllianceOneWay);
     state.register_function("GenerateArmyStart", l_GenerateArmyStart);
     state.register_function("SetIgnorePlayableRect", l_SetIgnorePlayableRect);
-    state.register_function("SetCommandSource", stub_noop);
+    state.register_function("SetCommandSource", l_SetCommandSource);
     // ArmyInitializePrebuiltUnits(army): the army's brain spawns the lobby's
     // prebuilt units (Moho runs its OnSpawnPreBuiltUnits).
     state.register_function("ArmyInitializePrebuiltUnits", [](lua_State* L) -> int {
@@ -5840,7 +5888,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("SessionIsReplay", l_SessionIsReplay);
     state.register_function("GetDepositsAroundPoint", l_GetDepositsAroundPoint);
     state.register_function("SessionGetScenarioInfo", l_SessionGetScenarioInfo);
-    state.register_function("GetCurrentCommandSource", stub_zero);
+    state.register_function("GetCurrentCommandSource", l_GetCurrentCommandSource);
     state.register_function("RequestPause", l_sim_RequestPause);
     state.register_function("SimConExecute", stub_noop);
     // MetaImpact(entity, pos, radius, amount): the physics push a big impact

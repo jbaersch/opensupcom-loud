@@ -5,15 +5,19 @@
 // once the camera is out past its mesh's IconFadeInZoom, and a blip's at any
 // zoom: generic (structure, land, naval, air) in UnidentifiedColor until the
 // unit has been seen. The runs draw ground, air, high-priority, selected; a
-// stunned unit's badge goes over its icon; a unit being built has none. On
-// dry ground away from the starts stand ARMY_1's units, all senses off but
-// a radar, and beyond them ARMY_2's, on that radar.
+// stunned unit's badge goes over its icon, as the pause badge over a
+// friendly unit's paused or switched off, which zoomed in shows alone; a
+// unit being built has none. On dry ground away from the starts stand
+// ARMY_1's units, all senses off but a radar, and beyond them ARMY_2's, on
+// that radar.
 
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
 
 #include "renderer/army_colors.hpp"
+#include "renderer/dds_decode.hpp"
+#include "renderer/dds_parser.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/strategic_icon_renderer.hpp"
 #include "renderer/texture_cache.hpp"
@@ -21,6 +25,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/world_snapshot.hpp"
+#include "vfs/virtual_file_system.hpp"
 
 #include <lua.h>
 #include <spdlog/spdlog.h>
@@ -32,6 +37,7 @@
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace osc::test {
@@ -75,6 +81,8 @@ void test_strategic_icons(TestContext& ctx) {
     const u32 picked = spawn_unit(ctx, "__osc_ic_picked", "uel0201", "ARMY_1", {sx, sz - 24});
     const u32 dazed = spawn_unit(ctx, "__osc_ic_dazed", "uel0201", "ARMY_1", {sx + 24, sz - 24});
     const u32 dying = spawn_unit(ctx, "__osc_ic_dying", "uel0201", "ARMY_1", {sx - 24, sz - 24});
+    const u32 off = spawn_unit(ctx, "__osc_ic_off", "uel0201", "ARMY_1", {sx + 24, sz + 24});
+    const u32 paused = spawn_unit(ctx, "__osc_ic_paused", "uel0105", "ARMY_1", {sx - 24, sz + 24});
     (void)spawn_unit(ctx, "__osc_ic_radar", "ueb1101", "ARMY_1", {sx, sz + 60});
     // ARMY_2's, 24 beyond the radar (it reaches 60): an engineer, a power
     // generator, an air scout (none of them ever seen), and a tank to be
@@ -83,14 +91,19 @@ void test_strategic_icons(TestContext& ctx) {
     const u32 e_gen = spawn_unit(ctx, "__osc_ic_egen", "ueb1101", "ARMY_2", {sx, sz + 84});
     const u32 e_air = spawn_unit(ctx, "__osc_ic_eair", "uea0101", "ARMY_2", {sx + 20, sz + 84});
     const u32 e_tank = spawn_unit(ctx, "__osc_ic_etank", "uel0201", "ARMY_2", {sx + 40, sz + 84});
-    run_lua(ctx,
-            "for _, u in {__osc_ic_tank, __osc_ic_scout, __osc_ic_sacu, __osc_ic_unbuilt,\n"
-            "              __osc_ic_picked, __osc_ic_dazed, __osc_ic_dying, __osc_ic_radar} do\n"
-            "  u:DisableIntel('Vision') u:DisableIntel('Radar') u:DisableIntel('Omni')\n"
-            "end\n"
-            "__osc_ic_radar:InitIntel(1, 'Radar', 60)\n"
-            "__osc_ic_radar:EnableIntel('Radar')\n"
-            "__osc_ic_dazed:SetStunned(100)\n");
+    run_lua(ctx, "for _, u in {__osc_ic_tank, __osc_ic_scout, __osc_ic_sacu, __osc_ic_unbuilt,\n"
+                 "              __osc_ic_picked, __osc_ic_dazed, __osc_ic_dying, __osc_ic_radar,\n"
+                 "              __osc_ic_off, __osc_ic_paused} do\n"
+                 "  u:DisableIntel('Vision') u:DisableIntel('Radar') u:DisableIntel('Omni')\n"
+                 "end\n"
+                 "__osc_ic_radar:InitIntel(1, 'Radar', 60)\n"
+                 "__osc_ic_radar:EnableIntel('Radar')\n"
+                 "__osc_ic_dazed:SetStunned(100)\n"
+                 "for _, u in {__osc_ic_off, __osc_ic_etank} do\n"
+                 "  u:AddToggleCap('RULEUTC_StealthToggle')\n"
+                 "  u:SetScriptBit('RULEUTC_StealthToggle', true)\n"
+                 "end\n"
+                 "__osc_ic_paused:SetPaused(true)\n");
     if (auto* e = ctx.sim.entity_registry().find(unbuilt); e && e->is_unit())
         static_cast<sim::Unit*>(e)->set_is_being_built(true);
     if (auto* e = ctx.sim.entity_registry().find(dying); e && e->is_unit()) {
@@ -196,6 +209,16 @@ void test_strategic_icons(TestContext& ctx) {
                 fmt::format("Test 5: the stunned tank's badge over its icon ({} icons there)",
                             at.size()));
     }
+    const std::string pause_badge = dir + "pause_rest.dds";
+    const auto badged = [&](const Frame& frame, u32 id) {
+        const auto at = icons_at(frame, id);
+        return at.size() == 2 && at[1] == at[0] + 1 && frame.icons[at[1]].texture == pause_badge &&
+               same_colour(frame.icons[at[1]], 1.0f, 1.0f, 1.0f);
+    };
+    t.check(badged(f, off) && badged(f, paused) && icons_at(f, tank).size() == 1,
+            fmt::format("Test 5b: the tank with its stealth switched off and the paused engineer "
+                        "have the pause badge over their icons ({} and {} there), the tank none",
+                        icons_at(f, off).size(), icons_at(f, paused).size()));
 
     // Test 6: FA's StrategicIconPS gives the icon's grey texels the tint
     // itself and keeps the rest: inside the tank's icon, some pixels are its
@@ -250,6 +273,8 @@ void test_strategic_icons(TestContext& ctx) {
     f = next();
     t.check(shows(f, e_tank, icon_texture(ctx, "uel0201", "rest"), army_tint(1)),
             "Test 8: the tank seen once shows its own icon, in ARMY_2's colour");
+    t.check(icons_at(f, e_tank).size() == 1,
+            "Test 8b: ARMY_2's tank, its stealth switched off too, has no pause badge");
 
     // Test 9: zoomed in, inside IconFadeInZoom: ARMY_1's units, drawn as
     // themselves, have none; the blips keep theirs.
@@ -259,6 +284,19 @@ void test_strategic_icons(TestContext& ctx) {
     t.check(icons_at(f, tank).empty() && icons_at(f, scout).empty() && !icons_at(f, e_eng).empty(),
             fmt::format("Test 9: zoomed in, the tank has no icon ({}), the blip has ({})",
                         icons_at(f, tank).size(), icons_at(f, e_eng).size()));
+    const auto badge_alone = [&](const Frame& frame, u32 id) {
+        const auto at = icons_at(frame, id);
+        return at.size() == 1 && frame.icons[at[0]].texture == pause_badge;
+    };
+    t.check(badge_alone(f, off) && badge_alone(f, paused),
+            fmt::format("Test 9b: zoomed in, the switched-off tank and the paused engineer show "
+                        "the pause badge alone ({} and {} icons there)",
+                        icons_at(f, off).size(), icons_at(f, paused).size()));
+    run_lua(ctx, "__osc_ic_off:SetScriptBit('RULEUTC_StealthToggle', false)\n"
+                 "__osc_ic_paused:SetPaused(false)\n");
+    f = next();
+    t.check(icons_at(f, off).empty() && icons_at(f, paused).empty(),
+            "Test 9c: stealth switched back on and unpaused, zoomed in, they have none");
 
     // Test 10: an objective's underlay (Unit:SetStrategicUnderlay) beneath
     // the tank's icon, at its own colour; "" takes it away.
@@ -610,6 +648,414 @@ void test_strategic_icons(TestContext& ctx) {
     }
     r.set_strategic_icon_scale(1.0f);
     r.set_projectile_icon_scale(1.0f);
+
+    run_lua(ctx, "__osc_ic_nuke_at = __osc_ic_nuke:GetPosition()\n"
+                 "__osc_ic_nuke:SetPosition(__osc_ic_tank:GetPosition(), true)\n");
+    f = next();
+    {
+        const auto texels = [&](const std::string& path, u32& w, u32& h) {
+            const auto file = ctx.vfs.read_file(path);
+            const auto dds = file ? renderer::parse_dds(*file) : std::nullopt;
+            if (!dds || dds->format != VK_FORMAT_BC3_UNORM_BLOCK || dds->mips.empty()) {
+                return std::vector<u8>{};
+            }
+            w = dds->width;
+            h = dds->height;
+            return renderer::decode_bc3_to_rgba(reinterpret_cast<const u8*>(dds->mips[0].data), w,
+                                                h);
+        };
+        u32 tank_w = 0;
+        u32 tank_h = 0;
+        u32 nuke_w = 0;
+        u32 nuke_h = 0;
+        const std::vector<u8> tank_texels =
+            texels(icon_texture(ctx, "uel0201", "rest"), tank_w, tank_h);
+        const std::vector<u8> nuke_texels = texels(nuke_icon, nuke_w, nuke_h);
+        const auto at = icons_at(f, tank);
+        const auto nukes = nuke_icons();
+        const ImageRGBA8 with = shots.grab(&selection);
+        r.set_projectile_icons(false);
+        const ImageRGBA8 without = shots.grab(&selection);
+        r.set_projectile_icons(true);
+        int overlap = 0;
+        int shown = 0;
+        if (!at.empty() && nukes.size() == 1 && !tank_texels.empty() && !nuke_texels.empty() &&
+            with.width == without.width && with.height == without.height) {
+            const Quad& q = f.icons[at.front()];
+            const auto left = static_cast<i32>(q.x - q.w * 0.5f);
+            const auto top = static_cast<i32>(q.y - q.h * 0.5f);
+            const auto nx = static_cast<i32>(nukes[0].x);
+            const auto ny = static_cast<i32>(nukes[0].y);
+            for (i32 v = 0; v < static_cast<i32>(nuke_h); ++v) {
+                for (i32 u = 0; u < static_cast<i32>(nuke_w); ++u) {
+                    const i32 x = nx + u;
+                    const i32 y = ny + static_cast<i32>(nuke_h) - 1 - v;
+                    const i32 tu = x - left;
+                    const i32 tv = y - top;
+                    if (tu < 0 || tv < 0 || tu >= static_cast<i32>(tank_w) ||
+                        tv >= static_cast<i32>(tank_h) || x < 0 || y < 0 ||
+                        x >= static_cast<i32>(with.width) || y >= static_cast<i32>(with.height)) {
+                        continue;
+                    }
+                    const u8* nt =
+                        &nuke_texels[(static_cast<size_t>(v) * nuke_w + static_cast<size_t>(u)) *
+                                     4];
+                    const u8* tt =
+                        &tank_texels[(static_cast<size_t>(tv) * tank_w + static_cast<size_t>(tu)) *
+                                     4];
+                    const bool alike = std::equal(nt, nt + 3, tt, [](u8 a, u8 b) {
+                        return std::abs(static_cast<int>(a) - static_cast<int>(b)) <= 8;
+                    });
+                    if (nt[3] != 255 || tt[3] != 255 || alike) {
+                        continue;
+                    }
+                    const size_t i =
+                        (static_cast<size_t>(y) * with.width + static_cast<size_t>(x)) * 4;
+                    ++overlap;
+                    shown += std::equal(&with.pixels[i], &with.pixels[i] + 3, &without.pixels[i])
+                                 ? 0
+                                 : 1;
+                }
+            }
+        }
+        t.check(overlap > 0 && shown == overlap,
+                fmt::format("Test 30: a nuke over the tank is drawn over its icon, as Moho draws "
+                            "the projectiles' icons after the units': {} of the {} pixels both "
+                            "cover in colours of their own show it",
+                            shown, overlap));
+    }
+    run_lua(ctx, "__osc_ic_nuke:SetPosition(__osc_ic_nuke_at, true)\n");
+    (void)next();
+
+    OffscreenShots retina(ctx, 2.0f);
+    if (!retina.ok()) {
+        t.check(false, "renderer init at a display scale of 2");
+        return;
+    }
+    renderer::Renderer& big = retina.renderer();
+    big.set_player_army(0);
+    const auto tank_blocks = [&](i32 k) {
+        std::array<int, 2> n{};
+        const std::string rest = icon_texture(ctx, "uel0201", "rest");
+        const auto file = ctx.vfs.read_file(rest);
+        const auto dds = file ? renderer::parse_dds(*file) : std::nullopt;
+        if (!dds || dds->format != VK_FORMAT_BC3_UNORM_BLOCK || dds->mips.empty()) {
+            return n;
+        }
+        const std::vector<u8> texels = renderer::decode_bc3_to_rgba(
+            reinterpret_cast<const u8*>(dds->mips[0].data), dds->width, dds->height);
+        (void)retina.shoot(*ctx.sim.terrain(), sx, sz, 300.0f);
+        const ImageRGBA8 image = retina.grab();
+        const auto at = [&](i32 x, i32 y) {
+            return &image.pixels[(static_cast<size_t>(y) * image.width + static_cast<size_t>(x)) *
+                                 4];
+        };
+        const auto& quads = big.strategic_icons().quads();
+        const auto& textures = big.strategic_icons().quad_textures();
+        for (size_t i = 0; i < quads.size() && i < textures.size(); ++i) {
+            if (textures[i] != rest) {
+                continue;
+            }
+            const auto x0 = static_cast<i32>(2.0f * quads[i].rect[0]);
+            const auto y0 = static_cast<i32>(2.0f * quads[i].rect[1]);
+            for (u32 v = 0; v < dds->height; ++v) {
+                for (u32 u = 0; u < dds->width; ++u) {
+                    if (texels[(static_cast<size_t>(v) * dds->width + u) * 4 + 3] != 255) {
+                        continue;
+                    }
+                    const i32 px = x0 + k * static_cast<i32>(u);
+                    const i32 py = y0 + k * static_cast<i32>(v);
+                    // An icon drawn later (a badge, a unit nearby) may lie over it.
+                    const bool covered = std::any_of(
+                        quads.begin() + static_cast<std::ptrdiff_t>(i) + 1, quads.end(),
+                        [&](const renderer::UIInstance& q) {
+                            return 2.0f * q.rect[0] < static_cast<f32>(px + k) &&
+                                   2.0f * (q.rect[0] + q.rect[2]) > static_cast<f32>(px) &&
+                                   2.0f * q.rect[1] < static_cast<f32>(py + k) &&
+                                   2.0f * (q.rect[1] + q.rect[3]) > static_cast<f32>(py);
+                        });
+                    if (covered || px < 0 || py < 0 || px + k > static_cast<i32>(image.width) ||
+                        py + k > static_cast<i32>(image.height)) {
+                        continue;
+                    }
+                    bool same = true;
+                    for (i32 dy = 0; dy < k; ++dy) {
+                        for (i32 dx = 0; dx < k; ++dx) {
+                            same = same &&
+                                   std::equal(at(px, py), at(px, py) + 3, at(px + dx, py + dy));
+                        }
+                    }
+                    ++n[0];
+                    n[1] += same ? 0 : 1;
+                }
+            }
+        }
+        return n;
+    };
+    {
+        const auto tank = tank_blocks(2);
+        t.check(tank[0] > 0 && tank[1] == 0,
+                fmt::format("Test 31: at a display scale of 2 each of the tank icon's opaque "
+                            "texels is a 2x2 block of one colour (point sampled): {} of {} "
+                            "blended",
+                            tank[1], tank[0]));
+    }
+
+    {
+        (void)retina.shoot(*ctx.sim.terrain(), sx, sz + 30, 300.0f);
+        const ImageRGBA8 image = retina.grab();
+        const Frame frame = drawn(big);
+        renderer::Renderer::SceneImage scene;
+        big.request_scene_capture(
+            [&](renderer::Renderer::SceneImage captured) { scene = std::move(captured); });
+        retina.redraw();
+        const auto points_of = [&](const char* name) -> std::optional<std::array<f32, 2>> {
+            const sim::EntityRecord* e = projectile(name);
+            const auto at = e ? screen_of(big, e->position) : std::nullopt;
+            if (!at) {
+                return std::nullopt;
+            }
+            return std::array<f32, 2>{std::floor((*at)[0] / 2.0f), std::floor((*at)[1] / 2.0f)};
+        };
+
+        const renderer::ProjectileIcon* nuke = nullptr;
+        for (const renderer::ProjectileIcon& p : big.projectile_icons()) {
+            if (p.path == nuke_icon) {
+                nuke = &p;
+            }
+        }
+        const auto nuke_at = points_of("tifmissilenuke01");
+        t.check(nuke && nuke_at && nuke->w == 20.0f && nuke->h == 20.0f &&
+                    std::abs(nuke->x + 10.0f - (*nuke_at)[0]) < 1.0f &&
+                    std::abs(nuke->y + 10.0f - (*nuke_at)[1]) < 1.0f,
+                fmt::format("Test 32: at a display scale of 2 the nuke's 20x20 icon is centred on "
+                            "its point, in points: ({:.1f}, {:.1f}) at ({:.0f}, {:.0f})",
+                            nuke ? nuke->x + nuke->w * 0.5f : -1.0f,
+                            nuke ? nuke->y + nuke->h * 0.5f : -1.0f,
+                            nuke_at ? (*nuke_at)[0] : -1.0f, nuke_at ? (*nuke_at)[1] : -1.0f));
+
+        const auto glowing = [&](f32 cx, f32 cy, i32 half, int& lit, int& dark) {
+            const auto x0 = static_cast<i32>(cx) - half;
+            const auto y0 = static_cast<i32>(cy) - half;
+            for (i32 y = std::max(y0, 0);
+                 y < std::min(y0 + 2 * half, static_cast<i32>(scene.height)); ++y) {
+                for (i32 x = std::max(x0, 0);
+                     x < std::min(x0 + 2 * half, static_cast<i32>(scene.width)); ++x) {
+                    const f32 a =
+                        scene.rgba[(static_cast<size_t>(y) * scene.width + static_cast<size_t>(x)) *
+                                       4 +
+                                   3];
+                    lit += std::abs(a - nuke->glow) < 0.002f ? 1 : 0;
+                    dark += a == 0.0f ? 1 : 0;
+                }
+            }
+        };
+        int lit = 0;
+        int dark = 0;
+        int lit_1x = 0;
+        int dark_1x = 0;
+        if (nuke && nuke->glow > 0.0f) {
+            glowing(2.0f * (nuke->x + 10.0f), 2.0f * (nuke->y + 10.0f), 20, lit, dark);
+            glowing(nuke->x + 10.0f, nuke->y + 10.0f, 20, lit_1x, dark_1x);
+        }
+        t.check(lit > 400 && lit + dark == 1600 && lit_1x == 0,
+                fmt::format("Test 33: in the {}x{} scene the nuke's icon glows in the 40x40 "
+                            "pixels around twice its point ({} lit, {} dark), none around the "
+                            "point itself ({} lit)",
+                            scene.width, scene.height, lit, dark, lit_1x));
+
+        const auto shell_at = points_of("tifantimattershells01");
+        const Quad* square =
+            shell_at ? quad_at(frame.icons, (*shell_at)[0], (*shell_at)[1], 3.0f, 3.0f) : nullptr;
+        int yellow = 0;
+        int spilled = 0;
+        if (square && image.width > 0) {
+            const auto x0 = static_cast<i32>(2.0f * (square->x - 1.5f));
+            const auto y0 = static_cast<i32>(2.0f * (square->y - 1.5f));
+            for (i32 y = std::max(y0 - 1, 0); y < std::min(y0 + 7, static_cast<i32>(image.height));
+                 ++y) {
+                for (i32 x = std::max(x0 - 1, 0);
+                     x < std::min(x0 + 7, static_cast<i32>(image.width)); ++x) {
+                    const u8* px = &image.pixels[(static_cast<size_t>(y) * image.width +
+                                                  static_cast<size_t>(x)) *
+                                                 4];
+                    if (px[0] != 255 || px[1] != 255 || px[2] != 0) {
+                        continue;
+                    }
+                    if (x >= x0 && x < x0 + 6 && y >= y0 && y < y0 + 6) {
+                        ++yellow;
+                    } else {
+                        ++spilled;
+                    }
+                }
+            }
+        }
+        t.check(square && yellow == 36 && spilled == 0,
+                fmt::format("Test 34: at a display scale of 2 the shell's yellow square, 3 points "
+                            "across, is the 6x6 pixels at twice its point ({} of 36 yellow, {} "
+                            "around them)",
+                            yellow, spilled));
+
+        const auto file = ctx.vfs.read_file(nuke_icon);
+        const auto dds = file ? renderer::parse_dds(*file) : std::nullopt;
+        std::vector<u8> texels;
+        if (dds && dds->format == VK_FORMAT_BC3_UNORM_BLOCK && !dds->mips.empty()) {
+            texels = renderer::decode_bc3_to_rgba(reinterpret_cast<const u8*>(dds->mips[0].data),
+                                                  dds->width, dds->height);
+        }
+        const auto blocks_at = [&](f32 left, f32 top, u32 width, u32 height, const auto& at,
+                                   const std::vector<std::array<f32, 4>>& over) {
+            std::array<int, 2> n{};
+            if (texels.empty()) {
+                return n;
+            }
+            const auto x0 = static_cast<i32>(2.0f * left);
+            const auto y0 = static_cast<i32>(2.0f * top);
+            for (u32 v = 0; v < dds->height; ++v) {
+                for (u32 u = 0; u < dds->width; ++u) {
+                    if (texels[(static_cast<size_t>(v) * dds->width + u) * 4 + 3] != 255) {
+                        continue;
+                    }
+                    const i32 px = x0 + 2 * static_cast<i32>(u);
+                    const i32 py = y0 + 2 * static_cast<i32>(dds->height - 1 - v);
+                    const bool covered =
+                        std::any_of(over.begin(), over.end(), [&](const std::array<f32, 4>& r) {
+                            return 2.0f * r[0] < static_cast<f32>(px + 2) &&
+                                   2.0f * (r[0] + r[2]) > static_cast<f32>(px) &&
+                                   2.0f * r[1] < static_cast<f32>(py + 2) &&
+                                   2.0f * (r[1] + r[3]) > static_cast<f32>(py);
+                        });
+                    if (covered || px < 0 || py < 0 || px + 1 >= static_cast<i32>(width) ||
+                        py + 1 >= static_cast<i32>(height)) {
+                        continue;
+                    }
+                    bool same = true;
+                    for (const auto& [dx, dy] :
+                         {std::pair{1, 0}, std::pair{0, 1}, std::pair{1, 1}}) {
+                        same = same && std::equal(at(px, py), at(px, py) + 3, at(px + dx, py + dy));
+                    }
+                    ++n[0];
+                    n[1] += same ? 0 : 1;
+                }
+            }
+            return n;
+        };
+        std::array<int, 2> in_scene{};
+        if (nuke && scene.width > 0) {
+            in_scene = blocks_at(nuke->x, nuke->y, scene.width, scene.height,
+                                 [&](i32 x, i32 y) {
+                                     return &scene.rgba[(static_cast<size_t>(y) * scene.width +
+                                                         static_cast<size_t>(x)) *
+                                                        4];
+                                 },
+                                 {});
+        }
+        t.check(in_scene[0] > 0 && in_scene[1] == 0,
+                fmt::format("Test 35: at a display scale of 2 each of the nuke icon's opaque "
+                            "texels is a 2x2 block of one colour in the scene, as the tank's "
+                            "icon: {} of {} blended",
+                            in_scene[1], in_scene[0]));
+
+        const renderer::GPUTexture* tex = big.texture_cache().get(nuke_icon);
+        std::array<int, 2> on_map{};
+        const auto& map_quads = big.minimap().quads();
+        for (size_t i = 0; i < map_quads.size(); ++i) {
+            const renderer::UIQuad& q = map_quads[i];
+            if (!tex || q.texture_ds != tex->descriptor_set || image.width == 0) {
+                continue;
+            }
+            std::vector<std::array<f32, 4>> later;
+            for (size_t j = i + 1; j < map_quads.size(); ++j) {
+                const auto& r = map_quads[j].inst.rect;
+                later.push_back({r[0], r[1], r[2], r[3]});
+            }
+            on_map = blocks_at(
+                q.inst.rect[0], q.inst.rect[1], image.width, image.height,
+                [&](i32 x, i32 y) {
+                    return &image.pixels[(static_cast<size_t>(y) * image.width +
+                                          static_cast<size_t>(x)) *
+                                         4];
+                },
+                later);
+        }
+        t.check(on_map[0] > 0 && on_map[1] == 0,
+                fmt::format("Test 36: so is its icon on the minimap: {} of {} blended", on_map[1],
+                            on_map[0]));
+
+        big.set_strategic_icon_scale(2.0f);
+        const auto tank = tank_blocks(4);
+        t.check(tank[0] > 0 && tank[1] == 0,
+                fmt::format("Test 37: at a display scale of 2 and ui_StrategicIconScale 2 each of "
+                            "the tank icon's opaque texels is a 4x4 block of one colour: {} of {} "
+                            "blended",
+                            tank[1], tank[0]));
+        big.set_projectile_icon_scale(2.0f);
+        (void)retina.shoot(*ctx.sim.terrain(), sx, sz + 30, 300.0f);
+        big.request_scene_capture(
+            [&](renderer::Renderer::SceneImage captured) { scene = std::move(captured); });
+        retina.redraw();
+        nuke = nullptr;
+        for (const renderer::ProjectileIcon& p : big.projectile_icons()) {
+            if (p.path == nuke_icon) {
+                nuke = &p;
+            }
+        }
+        int lit_4x = 0;
+        int dark_4x = 0;
+        if (nuke && nuke->w == 40.0f && nuke->glow > 0.0f) {
+            glowing(2.0f * (nuke->x + 20.0f), 2.0f * (nuke->y + 20.0f), 40, lit_4x, dark_4x);
+        }
+        t.check(lit_4x > 1600 && lit_4x + dark_4x == 6400,
+                fmt::format("Test 38: at a display scale of 2 and ui_ProjectileIconScale 2 the "
+                            "nuke's icon glows in the 80x80 pixels around twice its point ({} "
+                            "lit, {} dark)",
+                            lit_4x, dark_4x));
+        big.set_strategic_icon_scale(1.0f);
+        big.set_projectile_icon_scale(1.0f);
+    }
+
+    {
+        renderer::Renderer& big = retina.renderer();
+        big.camera().set_ortho(true);
+        renderer::Renderer::SceneImage scene;
+        big.request_scene_capture(
+            [&](renderer::Renderer::SceneImage captured) { scene = std::move(captured); });
+        retina.redraw();
+        big.camera().set_ortho(false);
+        const renderer::ProjectileIcon* nuke = nullptr;
+        for (const renderer::ProjectileIcon& p : big.projectile_icons()) {
+            if (p.path == nuke_icon) {
+                nuke = &p;
+            }
+        }
+        const auto lit_around = [&](f32 cx, f32 cy) {
+            int lit = 0;
+            const auto x0 = static_cast<i32>(cx) - 20;
+            const auto y0 = static_cast<i32>(cy) - 20;
+            for (i32 y = std::max(y0, 0); y < std::min(y0 + 40, static_cast<i32>(scene.height));
+                 ++y) {
+                for (i32 x = std::max(x0, 0); x < std::min(x0 + 40, static_cast<i32>(scene.width));
+                     ++x) {
+                    const f32 a =
+                        scene.rgba[(static_cast<size_t>(y) * scene.width + static_cast<size_t>(x)) *
+                                       4 +
+                                   3];
+                    lit += std::abs(a - nuke->glow) < 0.002f ? 1 : 0;
+                }
+            }
+            return lit;
+        };
+        int lit = 0;
+        int lit_1x = 0;
+        if (nuke && nuke->glow > 0.0f) {
+            lit = lit_around(2.0f * (nuke->x + 10.0f), 2.0f * (nuke->y + 10.0f));
+            lit_1x = lit_around(nuke->x + 10.0f, nuke->y + 10.0f);
+        }
+        t.check(big.cartographic_main() && lit > 400 && lit_1x == 0,
+                fmt::format("Test 33b: so in a cartographic main view ({}): {} lit around twice "
+                            "its point, {} around the point itself",
+                            big.cartographic_main(), lit, lit_1x));
+    }
 
     spdlog::info("Strategic icon test: {}/{} passed", t.pass, t.pass + t.fail);
 }

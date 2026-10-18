@@ -3,6 +3,7 @@
 // and the UI's own orders (M191). They live apart from the Lua library, which
 // the sim uses, so that library needs no renderer: osc_lua_user links both.
 
+#include "core/color.hpp"
 #include "core/localization.hpp"
 #include "core/test_status.hpp"
 #include "platform/executable.hpp"
@@ -21,6 +22,7 @@
 #include "renderer/frustum.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/terrain_preview.hpp"
+#include "renderer/world_shapes.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/category_expr.hpp"
@@ -202,17 +204,30 @@ static void bind_world_view(lua_State* L, ui::WorldView* wv) {
     if (r) {
         wv->set_renderer(r);
         wv->register_camera("WorldCamera", &r->camera());
-        wv->set_viewport(r->width(), r->height());
+        wv->set_viewport(r->ui_width(), r->ui_height());
     }
     auto* sim = get_sim(L);
     if (sim && sim->terrain()) wv->set_terrain(sim->terrain());
     if (!wv->is_minimap()) {
+        // A new view's camera looks in perspective (CameraImpl's mIsOrtho
+        // starts 0), its Register then restoring a saved cartographic mode;
+        // one bound late keeps the mode it was given meanwhile
+        if (r) r->camera().set_ortho(wv->is_cartographic());
         lua_pushstring(L, "__osc_world_view");
         lua_pushlightuserdata(L, wv);
         lua_rawset(L, LUA_REGISTRYINDEX);
     }
     spdlog::debug("WorldView bound: camera='{}', viewport={}x{}", wv->camera_name(),
                   wv->viewport_width(), wv->viewport_height());
+}
+
+void bind_unbound_world_views(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg || !get_renderer(L)) return;
+    for (const auto& control : reg->all()) {
+        auto* wv = dynamic_cast<ui::WorldView*>(control.get());
+        if (wv && !wv->destroyed() && !wv->camera()) bind_world_view(L, wv);
+    }
 }
 
 static int worldview_init(lua_State* L) {
@@ -267,51 +282,26 @@ static int worldview_init(lua_State* L) {
     return 0;
 }
 
+static bool read_vec3(lua_State* L, int idx, f32 out[3]);
+
 static int worldview_Project(lua_State* L) {
     auto* wv = check_world_view(L);
     if (!wv || !wv->camera()) {
-        // Fallback: return {x=0, y=0}
-        lua_newtable(L);
-        lua_pushstring(L, "x");
-        lua_pushnumber(L, 0);
-        lua_rawset(L, -3);
-        lua_pushstring(L, "y");
-        lua_pushnumber(L, 0);
-        lua_rawset(L, -3);
+        push_vector2(L, 0, 0);
         return 1;
     }
 
     // Update viewport from renderer if available
     auto* r = get_renderer(L);
-    if (r) wv->set_viewport(r->width(), r->height());
-
-    // Args: self, Vector {x,y,z}
-    f32 wx = 0, wy = 0, wz = 0;
-    if (lua_istable(L, 2)) {
-        lua_pushstring(L, "x");
-        lua_rawget(L, 2);
-        if (lua_isnumber(L, -1)) wx = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_pushstring(L, "y");
-        lua_rawget(L, 2);
-        if (lua_isnumber(L, -1)) wy = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_pushstring(L, "z");
-        lua_rawget(L, 2);
-        if (lua_isnumber(L, -1)) wz = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
+    if (r) {
+        wv->set_viewport(r->ui_width(), r->ui_height());
     }
 
+    f32 at[3] = {};
+    (void)read_vec3(L, 2, at);
     f32 sx = 0, sy = 0;
-    wv->project(wx, wy, wz, sx, sy);
-
-    lua_newtable(L);
-    lua_pushstring(L, "x");
-    lua_pushnumber(L, static_cast<lua_Number>(sx));
-    lua_rawset(L, -3);
-    lua_pushstring(L, "y");
-    lua_pushnumber(L, static_cast<lua_Number>(sy));
-    lua_rawset(L, -3);
+    wv->project(at[0], at[1], at[2], sx, sy);
+    push_vector2(L, sx, sy);
     return 1;
 }
 
@@ -342,6 +332,68 @@ static bool read_vec3(lua_State* L, int idx, f32 out[3]) {
     return ok;
 }
 
+// --- FAF's world drawing (FA-Binary-Patches DrawFunc.cpp) ---
+// UI_DrawLine, UI_DrawCircle and UI_DrawRect draw flat in the world, over it,
+// from a world view's OnRenderWorld (the renderer collects the shapes then);
+// called at any other time they raise an error, as FAF's do.
+
+static renderer::WorldShapes* drawing_shapes(lua_State* L, const char* what) {
+    lua_pushstring(L, renderer::kWorldShapesKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* shapes = static_cast<renderer::WorldShapes*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!shapes) luaL_error(L, "Attempt to call %s outside of OnRenderWorld", what);
+    return shapes;
+}
+
+static sim::Vector3 shape_vector(lua_State* L, int idx) {
+    f32 v[3] = {0, 0, 0};
+    if (!read_vec3(L, idx, v)) luaL_argerror(L, idx, "vector expected");
+    return {v[0], v[1], v[2]};
+}
+
+/// A shape's colour, as SCR_DecodeColor reads it
+static u32 shape_color(lua_State* L, int idx) {
+    const char* text = luaL_checkstring(L, idx);
+    const std::optional<u32> color = decode_color(text);
+    if (!color) luaL_error(L, "Unknown color: %s", text);
+    return color.value_or(0u);
+}
+
+static f32 shape_thickness(lua_State* L, int idx) {
+    return static_cast<f32>(luaL_optnumber(L, idx, renderer::WorldShapes::kDefaultThickness));
+}
+
+// UI_DrawLine(pos1, pos2, color, thickness = 0.15)
+static int l_UI_DrawLine(lua_State* L) {
+    auto* shapes = drawing_shapes(L, "DrawLine");
+    const sim::Vector3 a = shape_vector(L, 1);
+    const sim::Vector3 b = shape_vector(L, 2);
+    const u32 color = shape_color(L, 3);
+    shapes->line(a, b, color, shape_thickness(L, 4));
+    return 0;
+}
+
+// UI_DrawCircle(pos, radius, color, thickness = 0.15)
+static int l_UI_DrawCircle(lua_State* L) {
+    auto* shapes = drawing_shapes(L, "DrawCircle");
+    const sim::Vector3 at = shape_vector(L, 1);
+    const auto radius = static_cast<f32>(luaL_checknumber(L, 2));
+    const u32 color = shape_color(L, 3);
+    shapes->circle(at, radius, color, shape_thickness(L, 4));
+    return 0;
+}
+
+// UI_DrawRect(pos, size, color, thickness = 0.15)
+static int l_UI_DrawRect(lua_State* L) {
+    auto* shapes = drawing_shapes(L, "DrawRect");
+    const sim::Vector3 at = shape_vector(L, 1);
+    const auto size = static_cast<f32>(luaL_checknumber(L, 2));
+    const u32 color = shape_color(L, 3);
+    shapes->rect(at, size, color, shape_thickness(L, 4));
+    return 0;
+}
+
 static void push_vec3(lua_State* L, f32 x, f32 y, f32 z) {
     lua_newtable(L);
     lua_pushnumber(L, x);
@@ -361,10 +413,27 @@ static f32 field_number(lua_State* L, int idx, const char* name, f32 fallback) {
     return v;
 }
 
+/// The renderer whose camera a camera object (GetCamera's) moves: the
+/// WorldCamera's. The engine has one camera, the main view's; another name's
+/// object (the minimap's 'MiniMap', a second head's) has none, so its calls
+/// pass the main view by: retail's minimap.lua sets its own camera's zoom
+/// limit to 1.0, which had cut the main view's from retail's 1.4.
+static renderer::Renderer* camera_renderer(lua_State* L) {
+    if (!lua_istable(L, 1)) return nullptr;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, 1);
+    const void* tagged = lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    // Only the renderer the state was given: a script can write the table,
+    // so a pointer found there is a tag to check, not one to trust
+    renderer::Renderer* r = get_renderer(L);
+    return tagged && tagged == r ? r : nullptr;
+}
+
 /// camera:SaveSettings() -> {Focus, Zoom, Pitch, Heading} (Moho's: the
 /// focus, the target zoom, the pitch and heading)
 static int camera_SaveSettings(lua_State* L) {
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     lua_newtable(L);
     if (!r) return 1;
     const auto& cam = r->camera();
@@ -387,7 +456,7 @@ static int camera_SaveSettings(lua_State* L) {
 /// rotation reverts (the pitch glides back to the zoom's)
 static int camera_RestoreSettings(lua_State* L) {
     if (!lua_istable(L, 2)) return 0;
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     if (!r) return 0;
     auto& cam = r->camera();
     f32 focus[3] = {cam.focus_x(), cam.focus_y(), cam.focus_z()};
@@ -405,7 +474,7 @@ static int camera_RestoreSettings(lua_State* L) {
 /// camera:SetZoom(zoom, seconds): TargetManual at the target, heading and
 /// pitch, over the seconds
 static int camera_SetZoom(lua_State* L) {
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     if (!r) return 0;
     auto& cam = r->camera();
     cam.target_manual(cam.target_x(), cam.target_y(), cam.target_z(), cam.heading(), cam.pitch(),
@@ -416,14 +485,14 @@ static int camera_SetZoom(lua_State* L) {
 
 /// camera:GetZoom(): the target zoom (CameraGetTargetZoom)
 static int camera_GetZoom(lua_State* L) {
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     lua_pushnumber(L, r ? r->camera().zoom() : kHeadlessMaxZoom);
     return 1;
 }
 
 /// camera:SetMaxZoomMult(mult) -- scales the far zoom limit.
 static int camera_SetMaxZoomMult(lua_State* L) {
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     if (r) r->camera().set_max_zoom_mult(static_cast<f32>(luaL_checknumber(L, 2)));
     return 0;
 }
@@ -435,27 +504,27 @@ static int camera_GetMinZoom(lua_State* L) {
 }
 
 static int camera_GetMaxZoom(lua_State* L) {
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     lua_pushnumber(L, r ? r->camera().max_zoom() : kHeadlessMaxZoom);
     return 1;
 }
 
 /// camera:SetTargetZoom(zoom): the zoom the view glides toward (mNearZoom)
 static int camera_SetTargetZoom(lua_State* L) {
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     if (r) r->camera().set_requested_zoom(static_cast<f32>(luaL_checknumber(L, 2)));
     return 0;
 }
 
 /// camera:GetTargetZoom(): the zoom the view glides toward
 static int camera_GetTargetZoom(lua_State* L) {
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     lua_pushnumber(L, r ? r->camera().requested_zoom() : kHeadlessMaxZoom);
     return 1;
 }
 
 static int camera_Reset(lua_State* L) {
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     if (r) r->camera().reset();
     return 0;
 }
@@ -514,7 +583,7 @@ static int l_SetInvertMidMouseButton(lua_State* L) {
 }
 
 static int camera_MoveTo(lua_State* L) {
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     if (!r) return 0;
     auto& cam = r->camera();
     f32 pos[3] = {cam.target_x(), cam.focus_y(), cam.target_z()};
@@ -531,7 +600,7 @@ static int camera_MoveTo(lua_State* L) {
 /// x1, y1} or a Rect's fields, y being map z), its corners on their cells'
 /// middles at the ground's height there (cfunc_CameraImplMoveToRegionL)
 static int camera_MoveToRegion(lua_State* L) {
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     if (!r || !lua_istable(L, 2)) return 0;
     f32 v[4] = {0, 0, 0, 0};
     static const char* const keys[4] = {"x0", "y0", "x1", "y1"};
@@ -615,7 +684,7 @@ static int ui_wait_camera(lua_State* L) {
 
 /// camera:TargetEntities(ids, zoom, seconds): to the first, not followed
 static int camera_TargetEntities(lua_State* L) {
-    if (auto* r = get_renderer(L)) {
+    if (auto* r = camera_renderer(L)) {
         r->camera().target_entities(read_entity_ids(L, 2), false,
                                     static_cast<f32>(lua_tonumber(L, 3)),
                                     static_cast<f32>(lua_tonumber(L, 4)));
@@ -625,7 +694,7 @@ static int camera_TargetEntities(lua_State* L) {
 
 /// camera:TrackEntities(ids, zoom, seconds): to the first, followed
 static int camera_TrackEntities(lua_State* L) {
-    if (auto* r = get_renderer(L)) {
+    if (auto* r = camera_renderer(L)) {
         r->camera().target_entities(read_entity_ids(L, 2), true,
                                     static_cast<f32>(lua_tonumber(L, 3)),
                                     static_cast<f32>(lua_tonumber(L, 4)));
@@ -635,7 +704,7 @@ static int camera_TrackEntities(lua_State* L) {
 
 /// camera:NoseCam(id, pitchAdjust, zoom, seconds, transition)
 static int camera_NoseCam(lua_State* L) {
-    if (auto* r = get_renderer(L)) {
+    if (auto* r = camera_renderer(L)) {
         r->camera().target_nose_cam(read_entity_ids(L, 2), static_cast<f32>(lua_tonumber(L, 3)),
                                     static_cast<f32>(lua_tonumber(L, 4)),
                                     static_cast<f32>(lua_tonumber(L, 5)),
@@ -646,7 +715,7 @@ static int camera_NoseCam(lua_State* L) {
 
 /// camera:Spin(headingRate, [zoomRate]): revolutions and zoom a second
 static int camera_Spin(lua_State* L) {
-    if (auto* r = get_renderer(L)) {
+    if (auto* r = camera_renderer(L)) {
         r->camera().spin_rates(static_cast<f32>(lua_tonumber(L, 2)),
                                static_cast<f32>(lua_tonumber(L, 3)));
     }
@@ -655,45 +724,45 @@ static int camera_Spin(lua_State* L) {
 
 /// camera:SetAccMode(name): Linear, FastInSlowOut or SlowInOut
 static int camera_SetAccMode(lua_State* L) {
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     if (r && lua_type(L, 2) == LUA_TSTRING) (void)r->camera().set_acc_mode(lua_tostring(L, 2));
     return 0;
 }
 
 static int camera_EnableEaseInOut(lua_State* L) {
-    if (auto* r = get_renderer(L)) r->camera().set_ease_in_out(true);
+    if (auto* r = camera_renderer(L)) r->camera().set_ease_in_out(true);
     return 0;
 }
 
 static int camera_DisableEaseInOut(lua_State* L) {
-    if (auto* r = get_renderer(L)) r->camera().set_ease_in_out(false);
+    if (auto* r = camera_renderer(L)) r->camera().set_ease_in_out(false);
     return 0;
 }
 
 static int camera_HoldRotation(lua_State* L) {
-    if (auto* r = get_renderer(L)) r->camera().hold_rotation();
+    if (auto* r = camera_renderer(L)) r->camera().hold_rotation();
     return 0;
 }
 
 static int camera_RevertRotation(lua_State* L) {
-    if (auto* r = get_renderer(L)) r->camera().revert_rotation();
+    if (auto* r = camera_renderer(L)) r->camera().revert_rotation();
     return 0;
 }
 
 static int camera_UseGameClock(lua_State* L) {
-    if (auto* r = get_renderer(L)) r->camera().use_game_clock(true);
+    if (auto* r = camera_renderer(L)) r->camera().use_game_clock(true);
     return 0;
 }
 
 static int camera_UseSystemClock(lua_State* L) {
-    if (auto* r = get_renderer(L)) r->camera().use_game_clock(false);
+    if (auto* r = camera_renderer(L)) r->camera().use_game_clock(false);
     return 0;
 }
 
 /// camera:GetFocusPosition() -> the point the camera looks at (its focus,
 /// on the ground or the water's surface)
 static int camera_GetFocusPosition(lua_State* L) {
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     if (!r) {
         push_vec3(L, 512.0f, 0.0f, 512.0f);
         return 1;
@@ -704,13 +773,13 @@ static int camera_GetFocusPosition(lua_State* L) {
 }
 
 static int camera_GetHeading(lua_State* L) {
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     lua_pushnumber(L, r ? r->camera().heading() : renderer::Camera::kPi);
     return 1;
 }
 
 static int camera_GetPitch(lua_State* L) {
-    auto* r = get_renderer(L);
+    auto* r = camera_renderer(L);
     lua_pushnumber(L, r ? r->camera().pitch()
                         : renderer::Camera::kFarPitchDeg * renderer::Camera::kPi / 180.0f);
     return 1;
@@ -803,7 +872,9 @@ static int l_UnProject(lua_State* L) {
         sx = component(1, "x");
         sy = component(2, "y");
     }
-    if (auto* r = get_renderer(L); r && wv) wv->set_viewport(r->width(), r->height());
+    if (auto* r = get_renderer(L); r && wv) {
+        wv->set_viewport(r->ui_width(), r->ui_height());
+    }
     sim::Vector3 at{};
     if (!wv || !wv->camera() || !wv->get_mouse_world_pos(sx, sy, at.x, at.y, at.z)) {
         const f32 nan = std::numeric_limits<f32>::quiet_NaN();
@@ -842,10 +913,10 @@ static int l_GetMouseWorldPos(lua_State* L) {
     f32 mx = 0, my = 0;
     if (r) {
         f64 dx = 0, dy = 0;
-        r->mouse_position(dx, dy);
+        r->ui_mouse_position(dx, dy);
         mx = static_cast<f32>(dx);
         my = static_cast<f32>(dy);
-        wv->set_viewport(r->width(), r->height());
+        wv->set_viewport(r->ui_width(), r->ui_height());
     }
 
     f32 wx = 0, wy = 0, wz = 0;
@@ -1103,11 +1174,22 @@ static int l_SetOverlayFilters(lua_State* L) {
 // --- GetCamera global (M136a) ---
 // FA calls GetCamera(cameraName) and gets back a camera object with methods.
 static int l_GetCamera(lua_State* L) {
+    // The WorldCamera is the main view's, the engine's one camera (no name
+    // asks for it too); another's object moves nothing (camera_renderer)
+    bool world = true;
+    if (lua_type(L, 1) == LUA_TSTRING) {
+        const std::string_view name = lua_tostring(L, 1);
+        constexpr std::string_view kWorld = "worldcamera";
+        world = name.size() == kWorld.size() &&
+                std::equal(name.begin(), name.end(), kWorld.begin(), [](char a, char b) {
+                    return std::tolower(static_cast<unsigned char>(a)) == b;
+                });
+    }
     // Create a table with camera_methods metatable
     lua_newtable(L);
 
     // Store renderer pointer as _c_object for camera methods to use
-    auto* r = get_renderer(L);
+    auto* r = world ? get_renderer(L) : nullptr;
     if (r) {
         lua_pushstring(L, "_c_object");
         lua_pushlightuserdata(L, r);
@@ -1795,22 +1877,6 @@ static int l_GetRolloverInfo(lua_State* L) {
         return 1;
     }
 
-    // Fuel: -1 for units without any, which hides the unit view's fuel line
-    // (it multiplies Physics.FuelUseTime by the ratio). Fuel use is not
-    // simulated yet, so fuelled units report a full tank.
-    lua_Number fuel_ratio = -1;
-    if (push_entity_blueprint(L, unit)) {
-        lua_pushstring(L, "Physics");
-        lua_rawget(L, -2);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "FuelUseTime");
-            lua_rawget(L, -2);
-            if (lua_isnumber(L, -1) && lua_tonumber(L, -1) > 0) fuel_ratio = 1;
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 2); // Physics + blueprint
-    }
-
     lua_newtable(L); // result table
 
     set_str("blueprintId", unit->blueprint_id().c_str());
@@ -1823,7 +1889,7 @@ static int l_GetRolloverInfo(lua_State* L) {
     set_num("armyIndex", static_cast<lua_Number>(unit->army()));
     set_num("workProgress", static_cast<lua_Number>(unit->work_progress()));
     set_num("shieldRatio", static_cast<lua_Number>(unit->shield_ratio()));
-    set_num("fuelRatio", fuel_ratio);
+    set_num("fuelRatio", static_cast<lua_Number>(unit->fuel_ratio()));
 
     const auto& econ = unit->economy();
     set_num("massProduced", static_cast<lua_Number>(econ.production_mass));
@@ -1935,6 +2001,9 @@ void register_user_bindings(LuaState& state) {
     state.register_function("GetHighlightCommand", l_GetHighlightCommand);
     state.register_function("GetDepositsAroundPoint", l_UiGetDepositsAroundPoint);
     state.register_function("CopyToClipboard", l_CopyToClipboard);
+    state.register_function("UI_DrawLine", l_UI_DrawLine);
+    state.register_function("UI_DrawCircle", l_UI_DrawCircle);
+    state.register_function("UI_DrawRect", l_UI_DrawRect);
     state.register_function("UnProject", l_UnProject);
     state.register_function("GetCamera", l_GetCamera);
     state.register_function("SyncPlayableRect", l_SyncPlayableRect);
@@ -2061,10 +2130,10 @@ bool cursor_world_pos(lua_State* L, sim::Vector3& out) {
     f32 mx = 0, my = 0;
     if (auto* r = get_renderer(L)) {
         f64 dx = 0, dy = 0;
-        r->mouse_position(dx, dy);
+        r->ui_mouse_position(dx, dy);
         mx = static_cast<f32>(dx);
         my = static_cast<f32>(dy);
-        wv->set_viewport(r->width(), r->height());
+        wv->set_viewport(r->ui_width(), r->ui_height());
     }
     return wv->get_mouse_world_pos(mx, my, out.x, out.y, out.z);
 }

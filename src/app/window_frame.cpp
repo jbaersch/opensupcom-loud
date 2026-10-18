@@ -70,8 +70,8 @@ double App::Window::begin_frame() {
     osc::Profiler::instance().begin_frame();
     // A resized window: the UI's root frame follows it (M217h)
     if (renderer.take_resized()) {
-        root_width = renderer.width();
-        root_height = renderer.height();
+        root_width = renderer.ui_width();
+        root_height = renderer.ui_height();
         size_root_frame(ui_lua_state.raw(), root_width, root_height);
     }
     if (osc::core::kNativeFullscreen && !offscreen_capture && !adapter_overridden &&
@@ -144,7 +144,8 @@ void App::Window::update_world_sounds() {
     // The ticks' one-shots, in order.
     auto& events = world_interp.history.events();
     for (const auto& s : events.sounds)
-        sound.play_world({s.bank, s.cue, s.lod_cutoff, s.pos, s.underwater, s.tick}, hears);
+        sound.play_world({s.bank, s.cue, s.lod_cutoff, s.pos, s.underwater, s.tick, s.entity_id},
+                         hears);
     events.sounds.clear();
 
     // The entities' wanted loops: where they are drawn, and whether they're
@@ -228,13 +229,14 @@ void App::Window::advance_sim(double dt) {
             for (int r = 0; r < rounds; ++r) {
                 session->send_frame();
                 session->receive_and_advance();
-                // A timed-out peer is defeated so the match resolves
-                // instead of stalling in "waiting for players": the
-                // survivors agree on its last frame, and the session
-                // defeats its army on the same tick on every one of
-                // them (a command, so replays keep it).
+                // A timed-out peer leaves so the match resolves instead
+                // of stalling in "waiting for players": the survivors
+                // agree on its last frame, and its command source ends on
+                // the same tick on every one of them (a command, so
+                // replays keep it) -- an army it leaves with no player is
+                // abandoned to its brain, which retail's defeats.
                 for (osc::u32 src : session->take_dropped()) {
-                    spdlog::warn("[mp] peer {} dropped — its army is defeated", src);
+                    spdlog::warn("[mp] peer {} dropped — its source ends", src);
                     osc::lua::mp_disconnect_source(src); // M218e
                 }
             }
@@ -248,8 +250,10 @@ void App::Window::advance_sim(double dt) {
                                                  dt * game_state_mgr.speed(),
                                                  osc::sim::SimState::SECONDS_PER_TICK, 8);
             const auto advance_tick = [&] {
-                // A replay plays to its end, then holds there.
-                if (active_playback && active_playback->finished(*sim_state)) return false;
+                // A game or a replay plays to its end, then holds there.
+                if (sim_state->game_over() ||
+                    (active_playback && active_playback->finished(*sim_state)))
+                    return false;
                 sim_state->tick();
                 if (active_playback) {
                     const bool diverged = active_playback->diverged_at() != 0;
@@ -286,10 +290,10 @@ void App::Window::finish_world_ui_after_post_load() {
 
 void App::Window::run_beats(double dt, u32 beat_tick0) {
     // Moho's sim beat reaches the user side once per tick, and
-    // keeps running at the tick rate while paused.
+    // keeps running at the tick rate while paused or the game is over.
     if (sim_state && sim_lua_state) {
         osc::u32 beats = sim_state->tick_count() - beat_tick0;
-        if (game_state_mgr.paused()) {
+        if (game_state_mgr.paused() || sim_state->game_over()) {
             paused_beat_accumulator += dt;
             while (paused_beat_accumulator >= osc::sim::SimState::SECONDS_PER_TICK) {
                 paused_beat_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
@@ -360,8 +364,8 @@ void App::Window::drive_scripted_mouse() {
         if (!sim_state || !sim_state->terrain()) {
             return std::nullopt;
         }
-        const auto w = static_cast<f32>(renderer.width());
-        const auto h = static_cast<f32>(renderer.height());
+        const auto w = static_cast<f32>(renderer.ui_width());
+        const auto h = static_cast<f32>(renderer.ui_height());
         const sim::Vector3 at{
             static_cast<f32>(x),
             sim_state->terrain()->get_surface_height(static_cast<f32>(x), static_cast<f32>(z)),
@@ -392,7 +396,7 @@ void App::Window::update_ui(double dt) {
     renderer.set_ui_keys_blocked(ui_registry.key_down_blocked());
     {
         osc::f64 mx = 0, my = 0;
-        renderer.mouse_position(mx, my);
+        renderer.ui_mouse_position(mx, my);
         renderer.camera().set_mouse_enabled(!mouse_over_ui(ui_lua_state.raw(), mx, my));
     }
     if (sim_state && sim_state->has_playable_rect()) {
@@ -466,7 +470,7 @@ void App::Window::update_input(double dt, const sim::FrameView& frame_view) {
         sync_build_ghost(*sim_state, current_command_mode, ghost_from_mode);
         input_handler.update(renderer, *sim_state, dt, [&] {
             osc::f64 mx = 0, my = 0;
-            renderer.mouse_position(mx, my);
+            renderer.ui_mouse_position(mx, my);
             return mouse_over_ui(ui_lua_state.raw(), mx, my);
         });
         if (input_handler.cursor_world()) {

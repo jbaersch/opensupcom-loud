@@ -1,4 +1,6 @@
 #include "renderer/mesh_cache.hpp"
+#include "renderer/cartographic_technique.hpp"
+#include "renderer/minimap_meshes.hpp"
 #include "sim/scm_parser.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "vfs/virtual_file_system.hpp"
@@ -15,6 +17,14 @@ extern "C" {
 }
 
 namespace osc::renderer {
+
+namespace {
+/// The mesh's cartographic technique at each fidelity, by its resolved shader.
+void set_cartographic(GPUMesh& mesh, const std::string& shader) {
+    for (int lane = 0; lane < 3; ++lane)
+        mesh.cartographic[static_cast<size_t>(lane)] = cartographic_technique(shader, lane);
+}
+} // namespace
 
 /// Lowercase a string in-place (blueprint IDs in __blueprints are lowercased).
 static void to_lower(std::string& s) {
@@ -44,11 +54,11 @@ const GPUMesh* MeshCache::get(const std::string& blueprint_id,
 }
 
 const GPUMesh* MeshCache::get_file(const std::string& scm_path, const std::string& albedo,
-                                   MeshTechnique technique) {
+                                   const std::string& shader) {
     if (device_ == VK_NULL_HANDLE || scm_path.empty()) return nullptr;
     // Kept beside the blueprints' meshes, under a key no blueprint id has.
-    const std::string key =
-        "file:" + scm_path + "|" + albedo + "|" + std::to_string(static_cast<u32>(technique));
+    const std::string resolved = resolve_shader_name(shader);
+    const std::string key = "file:" + scm_path + "|" + albedo + "|" + resolved;
     if (auto it = lod_cache_.find(key); it != lod_cache_.end())
         return it->second.lods.empty() ? nullptr : &it->second.lods.front().mesh;
     if (failed_.count(key)) return nullptr;
@@ -58,7 +68,8 @@ const GPUMesh* MeshCache::get_file(const std::string& scm_path, const std::strin
         return nullptr;
     }
     mesh.texture_path = albedo;
-    mesh.technique = technique;
+    mesh.technique = mesh_technique(resolved);
+    set_cartographic(mesh, resolved);
     LODSet set;
     set.lods.push_back({std::move(mesh), 0.0f});
     return &lod_cache_.emplace(key, std::move(set)).first->second.lods.front().mesh;
@@ -167,6 +178,7 @@ namespace {
 bool is_wreckage_shader(const std::string& shader) {
     return shader == "Wreckage";
 }
+
 } // namespace
 
 std::string resolve_shader_name(const std::string& shader_name) {
@@ -231,6 +243,7 @@ MeshTechnique mesh_technique(const std::string& shader) {
     if (shader_name == "RallyPoint") {
         return MeshTechnique::RallyPoint;
     }
+    if (shader_name == "MapImager") return MeshTechnique::MapImager;
     return MeshTechnique::Unit;
 }
 
@@ -239,6 +252,67 @@ f32 MeshCache::blueprint_scale(const std::string& blueprint_id, lua_State* L) {
     const f32 scale = resolve_uniform_scale(blueprint_id, L);
     scale_cache_.emplace(blueprint_id, scale);
     return scale;
+}
+
+f32 MeshCache::mesh_uniform_scale(const std::string& mesh_bp_id, lua_State* L) {
+    const std::string id = resolve_mesh_bp_id(mesh_bp_id, L);
+    const f32 scale = id.empty() ? 0.0f : read_mesh_number(id, "UniformScale", L);
+    return scale > 0.0f ? scale : 1.0f;
+}
+
+std::vector<MeshCache::LodFields> MeshCache::read_lods(const std::string& mesh_bp_id,
+                                                       lua_State* L) {
+    std::vector<LodFields> lods;
+    if (!L) return lods;
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, mesh_bp_id.c_str());
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "LODs");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                for (int i = 1;; ++i) {
+                    lua_rawgeti(L, -1, i);
+                    if (!lua_istable(L, -1)) {
+                        lua_pop(L, 1);
+                        break;
+                    }
+                    LodFields lod;
+                    lua_pushstring(L, "LODCutoff");
+                    lua_rawget(L, -2);
+                    if (lua_isnumber(L, -1)) lod.cutoff = static_cast<f32>(lua_tonumber(L, -1));
+                    lua_pop(L, 1);
+                    lua_pushstring(L, "ShaderName");
+                    lua_rawget(L, -2);
+                    lod.shader = resolve_shader_name(
+                        lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "");
+                    lua_pop(L, 2); // ShaderName, the LOD
+                    lods.push_back(std::move(lod));
+                }
+            }
+            lua_pop(L, 1); // LODs
+        }
+        lua_pop(L, 1); // the mesh blueprint
+    }
+    lua_pop(L, 1); // __blueprints
+    return lods;
+}
+
+f32 MeshCache::lod_reach(const std::string& bp_id, lua_State* L) {
+    if (auto it = reach_cache_.find(bp_id); it != reach_cache_.end()) return it->second;
+    const std::string mesh_bp_id = resolve_mesh_bp_id(bp_id, L);
+    std::vector<std::optional<f32>> cutoffs;
+    if (!mesh_bp_id.empty()) {
+        const std::vector<LodFields> lods = read_lods(mesh_bp_id, L);
+        cutoffs.reserve(lods.size());
+        for (const LodFields& lod : lods) cutoffs.push_back(lod.cutoff);
+    }
+    const f32 reach = renderer::lod_reach(cutoffs);
+    // Not cached without a state to read the blueprints from
+    if (L) reach_cache_.emplace(bp_id, reach);
+    return reach;
 }
 
 bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
@@ -275,6 +349,7 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         const std::string shader = read_lod_string_field(mesh_bp_id, lod_index, "ShaderName", L);
         gpu.wreckage = is_wreckage_shader(shader);
         gpu.technique = mesh_technique(shader);
+        set_cartographic(gpu, resolve_shader_name(shader));
         gpu.sort_order = sort_order;
         gpu.scrolling = read_lod_flag(mesh_bp_id, lod_index, "Scrolling", L);
 
@@ -319,6 +394,7 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         const std::string shader = read_lod_string_field(mesh_bp_id, 1, "ShaderName", L);
         gpu.wreckage = is_wreckage_shader(shader);
         gpu.technique = mesh_technique(shader);
+        set_cartographic(gpu, resolve_shader_name(shader));
         gpu.sort_order = sort_order;
         gpu.scrolling = read_lod_flag(mesh_bp_id, 1, "Scrolling", L);
 
@@ -844,7 +920,10 @@ f32 MeshCache::resolve_uniform_scale(const std::string& bp_id,
     if (!store_ || !L) return 1.0f;
 
     auto* entry = store_->find(bp_id);
-    if (!entry) return 1.0f;
+    // A mesh blueprint has no Display (its own UniformScale is
+    // mesh_uniform_scale's); nor is its table the store's to push into
+    // another Lua state than the store's.
+    if (!entry || entry->type == blueprints::BlueprintType::Mesh) return 1.0f;
 
     store_->push_lua_table(*entry, L);
     if (!lua_istable(L, -1)) { lua_pop(L, 1); return 1.0f; }
@@ -884,6 +963,7 @@ void MeshCache::destroy(VkDevice device, VmaAllocator allocator) {
     lod_cache_.clear();
     failed_.clear();
     scale_cache_.clear();
+    forget_reaches();
 }
 
 } // namespace osc::renderer

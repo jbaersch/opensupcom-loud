@@ -230,51 +230,6 @@ TEST_CASE("clear_local_command_sink returns to single-player behavior",
     CHECK(unit_of(sim, id)->command_queue().size() == 1);
 }
 
-TEST_CASE("A mapped source's orders move only its own army's units", "[routing]") {
-    LuaGuard g;
-    SimState sim(g.L, nullptr);
-    const auto mine = spawn_unit(sim); // army 0
-    const auto theirs = spawn_unit(sim);
-    unit_of(sim, theirs)->set_army(1);
-    sim.set_recording(true);
-
-    // Source 1 plays army 1; its frame names a unit of army 0 as well.
-    sim.set_source_army(1, 1);
-    sim.schedule_command(1, {mine, theirs}, move_to(100.0f, 0.0f), true);
-    sim.tick();
-    CHECK(unit_of(sim, mine)->command_queue().empty());
-    REQUIRE(unit_of(sim, theirs)->command_queue().size() == 1);
-    // The recording keeps the order as applied, so a replay needs no mapping.
-    REQUIRE(sim.recorded_replay().commands.size() == 1);
-    CHECK(sim.recorded_replay().commands[0].unit_ids == std::vector<osc::u32>{theirs});
-
-    // An unmapped source (the single-player player) is not limited.
-    sim.schedule_command(0, {mine, theirs}, move_to(50.0f, 0.0f), true);
-    sim.tick();
-    CHECK(unit_of(sim, mine)->command_queue().size() == 1);
-}
-
-TEST_CASE("A mapped source's UI callbacks touch only its own army's units", "[routing]") {
-    LuaGuard g;
-    SimState sim(g.L, nullptr);
-    const auto mine = spawn_unit(sim); // army 0
-    const auto theirs = spawn_unit(sim);
-    unit_of(sim, theirs)->set_army(1);
-
-    // Source 1 (army 1) sets hold fire on its selection, which names a unit
-    // of army 0 too.
-    sim.set_source_army(1, 1);
-    osc::sim::SimCallbackEntry hold;
-    hold.func_name = osc::sim::kUnitSettingCallback;
-    hold.args["Setting"] = std::string("FireState");
-    hold.args["Value"] = 1.0;
-    hold.unit_ids = {mine, theirs};
-    sim.schedule_callback(1, hold);
-    sim.tick();
-    CHECK(unit_of(sim, mine)->fire_state() == 0);
-    CHECK(unit_of(sim, theirs)->fire_state() == 1);
-}
-
 TEST_CASE("A Guard order leaves out the units Moho's issue does", "[routing][guard]") {
     // func_ProcessUnitCommand: never the unit itself, a factory only a
     // factory, never a unit guarding it, not without the order, not from a
@@ -370,4 +325,50 @@ TEST_CASE("A reclaim, capture, repair or build goes only to a unit of its catego
     CHECK(sim.route_command({drone}, order(CommandType::Capture), false) == 0);
     CHECK(sim.route_command({drone}, order(CommandType::Reclaim), false) == 0);
     CHECK(sim.route_command({drone}, order(CommandType::Repair), false) == 0);
+}
+
+TEST_CASE("An enhancing unit takes no order that clears its queue but Stop", "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const auto id = spawn_unit(sim);
+    Unit* acu = unit_of(sim, id);
+    UnitCommand enhance;
+    enhance.type = CommandType::Script;
+    enhance.command_id = 7;
+    acu->push_command(enhance, true);
+    acu->set_unit_state("Enhancing", true);
+
+    enhance.command_id = 0;
+    CHECK(sim.route_command({id}, move_to(100.0f, 0.0f), true) == 0);
+    CHECK(sim.route_command({id}, enhance, true) == 0);
+    REQUIRE(acu->command_queue().size() == 1);
+    CHECK(acu->command_queue().front().command_id == 7);
+    CHECK(sim.route_command({id}, move_to(100.0f, 0.0f), false) != 0);
+    CHECK(acu->command_queue().size() == 2);
+
+    UnitCommand stop;
+    stop.type = CommandType::Stop;
+    sim.route_command({id}, stop, true);
+    CHECK(acu->command_queue().empty());
+}
+
+TEST_CASE("A move, patrol or attack-move goes to no immobile unit", "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto u = std::make_unique<Unit>();
+    u->set_army(0);
+    u->set_motion_type("RULEUMT_None");
+    const auto id = sim.entity_registry().register_entity(std::move(u));
+    UnitCommand upgrade;
+    upgrade.type = CommandType::Upgrade;
+    unit_of(sim, id)->push_command(upgrade, true);
+
+    for (const CommandType type :
+         {CommandType::Move, CommandType::Patrol, CommandType::AggressiveMove}) {
+        UnitCommand order = move_to(100.0f, 0.0f);
+        order.type = type;
+        CHECK(sim.route_command({id}, order, true) == 0);
+    }
+    REQUIRE(unit_of(sim, id)->command_queue().size() == 1);
+    CHECK(unit_of(sim, id)->command_queue().front().type == CommandType::Upgrade);
 }

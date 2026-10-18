@@ -162,6 +162,12 @@ void test_sky(TestContext& ctx);
 /// --cartographic-test, in cartographic_test.cpp.
 void test_cartographic(TestContext& ctx);
 void test_cartographic_minimap(TestContext& ctx);
+void test_world_fog(TestContext& ctx);
+void test_cartographic_main(TestContext& ctx);
+void test_playable_boundary(TestContext& ctx);
+void test_map_border(TestContext& ctx);
+void test_minimap_meshes(TestContext& ctx);
+void test_world_shapes(TestContext& ctx);
 /// --skirt-render-test, in skirt_render_test.cpp.
 void test_skirt_render(TestContext& ctx);
 /// --shield-render-test (M211k), in shield_render_test.cpp.
@@ -218,8 +224,10 @@ void test_need_unpack(TestContext& ctx);
 void test_guard_engage(TestContext& ctx);
 void test_rebuilder_guard(TestContext& ctx);
 void test_mobile_build_start(TestContext& ctx);
+void test_build_site_join(TestContext& ctx);
 void test_drown(TestContext& ctx);
 void test_spawn_layer(TestContext& ctx);
+void test_warp(TestContext& ctx);
 void test_attack_move(TestContext& ctx);
 void test_placement_layers(TestContext& ctx);
 void test_yaw_only(TestContext& ctx);
@@ -273,7 +281,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
 /// other army loses its commander; the script defeats them (OnDefeat ->
 /// SetArmyOutOfGame and Sync.GameResult), declares the survivor's victory
 /// after its 15 s hold, and ends the session (EndGame); the UI hears each
-/// result (DoGameResult) and NoteGameOver, and the game is not paused.
+/// result (DoGameResult) and NoteGameOver, and the sim ticks no more.
 void test_victory_flow(TestContext& ctx, const std::function<void(int)>& pump_frames,
                        const std::function<void(int)>& play,
                        const std::function<bool(const char*)>& sim_lua);

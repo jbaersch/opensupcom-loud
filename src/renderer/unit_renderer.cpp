@@ -17,7 +17,6 @@
 #include <string>
 #include <algorithm>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace osc::renderer {
 
@@ -270,10 +269,13 @@ void UnitRenderer::preload_meshes(const std::vector<std::string>& bp_ids,
                  bp_ids.size(), loaded, failed);
 }
 
+static bool sorts_before(const MeshDrawGroup& a, const MeshDrawGroup& b) {
+    return a.mesh->sort_order < b.mesh->sort_order;
+}
+
 void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua_State* L,
-                          TextureCache* tex_cache, const Camera* camera,
-                          const std::unordered_set<u32>* selected_ids, const Frustum* frustum,
-                          bool meshes_drawn) {
+                          TextureCache* tex_cache, const Camera* camera, const Frustum* frustum,
+                          bool meshes_drawn, std::optional<f32> lod_metric) {
     mesh_groups_.clear();
     cube_instance_count_ = 0;
 
@@ -318,13 +320,26 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         // depth fill and its impacts, script entities given one by SetMesh.
         const bool script_mesh = !entity.is_unit && !entity.is_prop && !entity.is_projectile;
         if (script_mesh && entity.mesh_override.empty()) return;
+        // At a fixed metric (Mesh::ComputeLOD), a mesh no LOD of which takes
+        // it shows nothing: first, before anything else is looked up
+        if (lod_metric) {
+            if (entity.id >= reaches_.size())
+                reaches_.resize(std::max<size_t>(entity.id + 1, reaches_.size() * 3 / 2));
+            CachedReach& cached = reaches_[entity.id];
+            if (cached.reach < 0.0f || cached.mesh_changes != entity.mesh_changes) {
+                const std::string& id =
+                    entity.mesh_override.empty() ? entity.blueprint_id : entity.mesh_override;
+                cached = {entity.mesh_changes, id.empty() ? 0.0f : mesh_cache.lod_reach(id, L)};
+            }
+            if (cached.reach < *lod_metric) return;
+        }
         // Outside the playable rect when the scripts last synced it.
         if (playable_rect_ && playable_rect_->hides(entity.id)) return;
 
         // The entity's mesh instance, made when it appeared or changed mesh
         // (whether or not it is in view): its blueprint never changes, its
         // override's changes are counted.
-        const u32 birth = births_.tick(entity.id, entity.mesh_changes, now);
+        const u32 birth = lod_metric ? 0 : births_.tick(entity.id, entity.mesh_changes, now);
         // Strategic zoom draws none: the rest is wasted (24,000 instances
         // in M223b's strategic scene)
         if (!meshes_drawn) return;
@@ -360,9 +375,9 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         f32 r, g, b, a;
         get_army_color(entity, view, r, g, b, a);
 
-        // Compute camera distance for LOD selection
-        f32 cam_dist = 0.0f;
-        if (camera) {
+        // Compute camera distance for LOD selection (or the view's metric)
+        f32 cam_dist = lod_metric.value_or(0.0f);
+        if (camera && !lod_metric) {
             const f32 dx = pos.x - eye_x;
             const f32 dy = pos.y - eye_y;
             const f32 dz = pos.z - eye_z;
@@ -405,13 +420,6 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
             // which then tints its albedo by white (FA's NormalMappedAlpha).
             else if (entity.is_prop) {
                 g = -1.0f;
-            }
-            // Selection highlight: brighten team color (not a wreck's, whose
-            // negative red must stand)
-            if (selected_ids && entity.is_unit && !wreck && selected_ids->count(entity.id)) {
-                r = r * 0.5f + 0.5f;
-                g = g * 0.5f + 0.5f;
-                b = b * 0.5f + 0.5f;
             }
             inst.r = r;
             inst.g = g;
@@ -457,7 +465,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
             }
 
             mesh_count++;
-        } else if (entity.is_unit) {
+        } else if (entity.is_unit && !lod_metric) {
             // FA draws nothing for an entity without a mesh: projectiles that
             // only carry effects (NullShell, the ACU's warp-in) and markers.
             // A unit without one is a gap worth seeing, so it stands in as a
@@ -618,10 +626,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
     // first (MeshBatchKeyLess; M211k): a shield's impacts (500), its fill
     // (999), then the shield (1000). Stable: the opaque groups still come
     // before the blended ones, whose SortOrder is the same.
-    std::stable_sort(mesh_groups_.begin(), mesh_groups_.end(),
-                     [](const MeshDrawGroup& a, const MeshDrawGroup& b) {
-                         return a.mesh->sort_order < b.mesh->sort_order;
-                     });
+    std::stable_sort(mesh_groups_.begin(), mesh_groups_.end(), sorts_before);
 }
 
 bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z, f32 r, f32 g, f32 b,
@@ -674,7 +679,10 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z, f32 r,
 
         bind_mesh_textures(grp, tex_cache);
 
-        mesh_groups_.push_back(grp);
+        // Moho's build preview is a MeshRenderer instance, batched by its
+        // SortOrder with the rest (CBuildDragPreview::CreateBuildPreviewMeshInstance).
+        mesh_groups_.insert(
+            std::upper_bound(mesh_groups_.begin(), mesh_groups_.end(), grp, sorts_before), grp);
     }
 
     return true;
@@ -723,8 +731,10 @@ bool UnitRenderer::inject_mesh(const GPUMesh* mesh, const MeshInstance& instance
     grp.mesh = mesh;
     // A UI world mesh is made reflected, as every mesh instance no entity
     // made is (M213b); not an order mark, which tests no depth and would
-    // show through the reflected world.
-    grp.reflected = !is_feedback_technique(mesh->technique);
+    // show through the reflected world, nor the map's border, whose
+    // technique has no reflection stage.
+    grp.reflected =
+        !is_feedback_technique(mesh->technique) && mesh->technique != MeshTechnique::MapImager;
     grp.fading = is_blended_technique(mesh->technique);
     grp.instance_offset = total;
     grp.instance_count = 1;
@@ -751,6 +761,7 @@ void UnitRenderer::destroy(VkDevice device, VmaAllocator allocator) {
     allocator_ = VK_NULL_HANDLE;
     cube_instance_count_ = 0;
     mesh_groups_.clear();
+    reaches_.clear(); // the next map's entities
 }
 
 void UnitRenderer::dump(std::ostream& out) const {

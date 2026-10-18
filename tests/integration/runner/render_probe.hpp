@@ -53,7 +53,7 @@ public:
     /// The tests' pitch unless one sets another (radians, held).
     static constexpr f32 kPitch = 0.87f;
 
-    explicit OffscreenShots(TestContext& ctx);
+    explicit OffscreenShots(TestContext& ctx, f32 scale = 1.0f);
     ~OffscreenShots();
     OffscreenShots(const OffscreenShots&) = delete;
     OffscreenShots& operator=(const OffscreenShots&) = delete;
@@ -67,8 +67,9 @@ public:
     /// without, the terrain alone.
     Pixels shoot(const map::Terrain& terrain, f32 x, f32 z, f32 distance, bool with_world = true);
 
-    /// As shoot(), with the sim's entities, but the whole frame.
-    ImageRGBA8 shoot_frame(const map::Terrain& terrain, f32 x, f32 z, f32 distance);
+    /// As shoot(), but the whole frame (with the sim's entities by default).
+    ImageRGBA8 shoot_frame(const map::Terrain& terrain, f32 x, f32 z, f32 distance,
+                           bool with_world = true);
 
     renderer::Renderer& renderer() { return renderer_; }
 

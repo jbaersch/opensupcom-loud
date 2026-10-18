@@ -235,6 +235,18 @@ void push_vector3(lua_State* L, const sim::Vector3& v) {
     lua_setmetatable(L, -2);
 }
 
+void push_vector2(lua_State* L, f32 x, f32 y) {
+    lua_newtable(L);
+    lua_pushnumber(L, 1);
+    lua_pushnumber(L, x);
+    lua_settable(L, -3);
+    lua_pushnumber(L, 2);
+    lua_pushnumber(L, y);
+    lua_settable(L, -3);
+    push_vector_metatable(L);
+    lua_setmetatable(L, -2);
+}
+
 // Push a direction as the three separate numbers retail's bindings return, for
 // the calls retail's Lua destructures (`local x, y, z = GetBoneDirection(b)`).
 // Returns 3, for the caller's return statement.
@@ -307,8 +319,8 @@ void request_world_sound(lua_State* L, const sim::Entity& e, std::string bank, s
         const std::string& layer = static_cast<const sim::Unit&>(e).layer();
         underwater = layer == "Sub" || layer == "Seabed";
     }
-    sim->request_sound(
-        {std::move(bank), std::move(cue), std::move(lod_cutoff), e.position(), underwater});
+    sim->request_sound({std::move(bank), std::move(cue), std::move(lod_cutoff), e.position(),
+                        underwater, e.entity_id()});
 }
 
 /// Push the entity's blueprint table from the blueprint store (what
@@ -2195,24 +2207,31 @@ static int l_GetArmyAvatars(lua_State* L) {
     return 1;
 }
 
-/// GetIdleEngineers() -> the focus army's idle engineers (commanders are
-/// avatars, not engineers), or nil if there are none.
+/// GetIdleEngineers() -> the focus army's idle engineers, as Moho's UserUnit
+/// counts them, or nil if there are none.
 static int l_GetIdleEngineers(lua_State* L) {
     push_ui_unit_array(L,
                        idle_focus_army_units(L,
                                              [](const sim::Unit& u) {
                                                  return u.has_category("ENGINEER") &&
-                                                        !u.has_category("COMMAND");
+                                                        !u.has_category("COMMAND") &&
+                                                        !u.has_category("SCOUT") &&
+                                                        !u.has_category("UNTARGETABLE");
                                              }),
                        true);
     return 1;
 }
 
-/// GetIdleFactories() -> the focus army's idle factories, or nil.
+/// GetIdleFactories() -> the focus army's idle factories, as Moho's UserUnit
+/// counts them, or nil.
 static int l_GetIdleFactories(lua_State* L) {
-    push_ui_unit_array(
-        L, idle_focus_army_units(L, [](const sim::Unit& u) { return u.has_category("FACTORY"); }),
-        true);
+    push_ui_unit_array(L,
+                       idle_focus_army_units(L,
+                                             [](const sim::Unit& u) {
+                                                 return u.has_category("FACTORY") &&
+                                                        u.has_category("STRUCTURE");
+                                             }),
+                       true);
     return 1;
 }
 
@@ -2474,20 +2493,81 @@ static int l_RemoveConsoleOutputReciever(lua_State* L) {
     return 0;
 }
 
+namespace {
+
+/// Moho's CWldSession::IsObservingAllowed: a replay's watcher may, else
+/// the game's AllowObservers option (as Lua takes it true).
+bool observing_allowed(const sim::SimState& sim) {
+    if (sim.playback()) return true;
+    for (const auto& [key, value] : sim.recorded_replay().setup.options.values) {
+        if (key != "AllowObservers") continue;
+        return value.type != sim::GameOptionValue::Type::Boolean || value.bool_value;
+    }
+    return false;
+}
+
+/// Moho's CWldSession::ValidateFocusArmyRequest: a player may watch an army
+/// that takes their commands; anyone, with cheats on or the game over; a
+/// replay's watcher, any; and, where observing is allowed, a player with no
+/// army left in the game, any.
+bool focus_request_allowed(sim::SimState& sim, int army) {
+    if (!sim.command_sources_known()) return true; // nothing numbers the players
+    const auto& mp = mp_net_state();
+    if (sim.playback() || sim.cheats_option() || sim.game_ended()) return true;
+    const u32 local = mp.active() ? mp.local_source : 0;
+    if (army >= 0 && sim.army_has_command_source(army, local)) return true;
+    if (!observing_allowed(sim)) return false;
+    for (size_t i = 0; i < sim.army_count(); ++i) {
+        const auto* brain = sim.army_at(i);
+        if (brain && !brain->is_defeated() &&
+            sim.army_has_command_source(static_cast<i32>(i), local))
+            return false;
+    }
+    return true;
+}
+
+/// Moho's CWldSession::RequestFocusArmy(index): 0-based, -1 an observer;
+/// the next sim beat applies it, if allowed.
+void request_focus_army(lua_State* L, int army) {
+    auto* sim = get_sim(L);
+    const int last = sim ? static_cast<int>(sim->army_count()) - 1 : -1;
+    if (army < -1 || army > last) {
+        spdlog::info("CWldSession::RequestFocusArmy(): invalid army index {}.  Must be between -1 "
+                     "and {} inclusive",
+                     army, last);
+        return;
+    }
+    if (sim && !focus_request_allowed(*sim, army)) return;
+    lua_pushstring(L, kFocusArmyRequestKey);
+    lua_pushnumber(L, army);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
+} // namespace
+
 /// SetFocusArmy(army) -- 1-based, -1 = observer. During a world session it
 /// is a request the next sim beat applies (sync_beat), as Moho's session
-/// does, so the sim and the UI's OnSync see the change together; with no
-/// session there is nothing to wait for, so it applies at once.
+/// does, so the sim and the UI's OnSync see the change together -- if the
+/// player may watch that army (request_focus_army); with no session there
+/// is nothing to wait for, so it applies at once.
 static int l_SetFocusArmy(lua_State* L) {
     int army = static_cast<int>(luaL_checknumber(L, 1));
     lua_pushstring(L, core::kWorldUiActiveKey);
     lua_rawget(L, LUA_REGISTRYINDEX);
     const bool in_session = lua_toboolean(L, -1) != 0;
     lua_pop(L, 1);
-    lua_pushstring(L, in_session ? kFocusArmyRequestKey : "__osc_focus_army");
+    if (in_session) {
+        const auto* sim = get_sim(L);
+        const int armies = sim ? static_cast<int>(sim->army_count()) : 0;
+        if (army != -1 && (army < 1 || army > armies))
+            return luaL_error(L, "Invalid army index of %d; must be between 1 and %d inclusive.",
+                              army, armies);
+        request_focus_army(L, army > 0 ? army - 1 : army);
+        return 0;
+    }
+    lua_pushstring(L, "__osc_focus_army");
     lua_pushnumber(L, army > 0 ? army - 1 : army);
     lua_rawset(L, LUA_REGISTRYINDEX);
-    spdlog::debug("UI SetFocusArmy: {}{}", army, in_session ? " (next beat)" : "");
     return 0;
 }
 
@@ -3422,7 +3502,7 @@ static int l_SessionIsPaused(lua_State* L) {
 
 /// MapBorderClear() / MapBorderAdd(mesh): the decorative meshes around the
 /// map's edge (the skin's "imager" mesh; retail's UpdateWorldBorderState).
-/// They are kept for the world view; nothing draws them yet.
+/// Kept in order for the renderer, which draws each (map_border.hpp).
 static int l_MapBorderClear(lua_State* L) {
     lua_pushstring(L, "__osc_map_border_meshes");
     lua_newtable(L);
@@ -3840,6 +3920,24 @@ void register_console_commands(ui::Console& console) {
     });
     console.add("UI_ToggleGamePanels", [](lua_State* L, const Args&) {
         call_module_function(L, "/lua/ui/game/gamemain.lua", "HideGameUI", {});
+    });
+    // SetFocusArmy <index>: 0-based, -1 an observer, as the score board asks
+    // for an army it was clicked on (Moho's: RequestFocusArmy).
+    console.add("SetFocusArmy", [](lua_State* L, const Args& args) {
+        if (args.size() != 2) {
+            spdlog::info("SetFocusArmy <index>");
+            return;
+        }
+        lua_pushstring(L, core::kWorldUiActiveKey);
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        const bool in_session = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        if (!in_session) {
+            spdlog::info("SetFocusArmy: no session");
+            return;
+        }
+        request_focus_army(
+            L, static_cast<i32>(std::strtol(args[1].c_str(), nullptr, 10))); // Moho: atoi
     });
     // The sim rate (Moho's WLD_* commands).
     console.add("WLD_GameSpeed", [](lua_State* L, const Args& args) {

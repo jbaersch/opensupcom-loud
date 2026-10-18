@@ -175,7 +175,7 @@ void LockstepSession::receive_and_advance() {
         if (type == kResumeMessage) {
             const u32 source = r.u32v();
             const u32 serial = r.u32v();
-            if (r.ok() && source != local_source_ && !has_dropped(source))
+            if (r.ok() && participant(source) && source != local_source_ && !has_dropped(source))
                 sim_.resume_pause(serial);
             continue;
         }
@@ -183,7 +183,7 @@ void LockstepSession::receive_and_advance() {
             const u32 source = r.u32v();
             const u32 clock = r.u32v();
             const auto rate = static_cast<i32>(r.u32v());
-            if (r.ok() && source != local_source_ && !has_dropped(source))
+            if (r.ok() && participant(source) && source != local_source_ && !has_dropped(source))
                 apply_speed(clock, source, rate);
             continue;
         }
@@ -195,10 +195,15 @@ void LockstepSession::receive_and_advance() {
         }
         if (type != kFrameMessage) continue;
         u32 source = r.u32v();
+        // Only the game's sources play: a frame from any other (the engine's,
+        // whose callbacks defeat armies, among them) would gate the scheduler
+        // on a source that never confirms, and carry orders no player gave.
         // Ignore a source that is dropped or being dropped: late frames must
         // neither re-register it in the scheduler gate (re-stalling the
         // survivors) nor move the last frame this peer reported for it.
-        if (has_dropped(source) || dropping(source) || source == local_source_) continue;
+        if (!participant(source) || has_dropped(source) || dropping(source) ||
+            source == local_source_)
+            continue;
         u32 frame = r.u32v();
         u8 has_cs = r.u8v();
         u32 cs_tick = r.u32v();
@@ -260,7 +265,8 @@ void LockstepSession::receive_and_advance() {
 
     // Advance as far as every peer's confirmations allow (a pause taken on
     // a tick holds before the next).
-    while (!sim_.network_paused() && sim_.command_scheduler().ready_to_run(sim_.tick_count() + 1)) {
+    while (!sim_.network_paused() && !sim_.game_over() &&
+           sim_.command_scheduler().ready_to_run(sim_.tick_count() + 1)) {
         sim_.tick();
         record_local_checksum(sim_.tick_count(), sim_.tick_checksum().values());
     }
@@ -326,7 +332,9 @@ void LockstepSession::take_drop_report(ByteReader& r) {
         }
         relayed.emplace(frame, std::move(commands));
     }
-    if (!r.ok() || reporter == local_source_ || reporter == source) return;
+    if (!r.ok() || !participant(reporter) || !participant(source) || reporter == local_source_ ||
+        reporter == source)
+        return;
     if (source == local_source_) {
         if (!ejected_)
             spdlog::error("[lockstep] peer {} reports this peer as dropped; the game can't "
@@ -398,26 +406,20 @@ void LockstepSession::finalize_drop(u32 source, const DropVote& vote) {
     newly_dropped_.push_back(source);
     recent_frames_.erase(source);
 
-    // Its army -- the one its source plays, which a lobby's game numbers
-    // apart from its source (an observer's plays none) -- is defeated on the
-    // tick after its last frame, on every survivor, by the engine rather
-    // than any player.
-    const i32 army = sim_.army_of_source(source);
-    if (army < 0) {
-        spdlog::warn("[lockstep] peer source {} (watching) dropped after its frame {}", source,
-                     last);
-        return;
-    }
-    ScheduledCommand defeat;
-    defeat.exec_tick = last + 1;
-    defeat.source = kEngineSource;
-    defeat.callback = SimCallbackEntry{};
-    defeat.callback->func_name = kDefeatArmyCallback;
-    defeat.callback->args["Army"] = static_cast<f64>(army);
-    sim_.command_scheduler().submit(std::move(defeat));
-    spdlog::warn("[lockstep] peer source {} dropped after its frame {}; its army {} is defeated "
-                 "at tick {}",
-                 source, last, army, last + 1);
+    // Its source ends on the tick after its last frame, on every survivor,
+    // by the engine rather than any player (Moho's CommandSourceTerminated):
+    // the armies it commanded lose it, and one left with no player is
+    // abandoned (SimState::terminate_command_source).
+    ScheduledCommand terminated;
+    terminated.exec_tick = last + 1;
+    terminated.source = kEngineSource;
+    terminated.callback = SimCallbackEntry{};
+    terminated.callback->func_name = kCommandSourceTerminatedCallback;
+    terminated.callback->args["Source"] = static_cast<f64>(source);
+    sim_.command_scheduler().submit(std::move(terminated));
+    spdlog::warn("[lockstep] peer source {} (army {}) dropped after its frame {}; its source "
+                 "ends at tick {}",
+                 source, sim_.army_of_source(source), last, last + 1);
 }
 
 std::vector<u32> LockstepSession::take_dropped() {

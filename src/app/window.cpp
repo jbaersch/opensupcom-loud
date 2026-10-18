@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <string>
 
 namespace osc::app {
@@ -32,6 +33,11 @@ std::optional<int> App::Window::run() {
     // The render benchmark's frames are 1920x1080 (M223b); captures keep
     // their 1600x900.
     const bool bench = !opt.render_bench_report.empty();
+    if (const std::string scale = parse_string_arg(argc, argv, "--capture-scale", "");
+        offscreen_capture && !scale.empty()) {
+        const f32 s = std::strtof(scale.c_str(), nullptr);
+        renderer.set_offscreen_scale(s > 0.0f ? s : 1.0f);
+    }
     if (renderer.init(bench ? 1920 : 1600, bench ? 1080 : 900, "OpenSupCom", offscreen_capture)) {
         if (auto code = set_up()) return code;
         while (running()) {
@@ -57,8 +63,8 @@ std::optional<int> App::Window::set_up() {
     // The UI's root frame: the size the window was asked for, until its
     // swapchain has it (the resize lands a frame or more later), then the
     // swapchain's (review: the boot laid the front end out at 1600x900)
-    root_width = renderer.width();
-    root_height = renderer.height();
+    root_width = renderer.ui_width();
+    root_height = renderer.ui_height();
     renderer.share_range_overlays(app.range_overlays);
     if (!offscreen_capture) {
         const std::vector<std::string> args(argv, argv + argc);
@@ -87,6 +93,8 @@ std::optional<int> App::Window::set_up() {
     // Player input handler (ARMY_1 = index 0)
     input_handler.set_player_army(0);
     renderer.set_player_army(0);
+    // FAF's data runs as FAF's patched game would (its minimap mesh toggle)
+    renderer.set_faf_exe(!app.config.faf_data_path.empty());
     input_handler.set_recon(&renderer.recon()); // clicks pick what it shows
 
     publish_window_objects();
@@ -243,6 +251,9 @@ void App::Window::publish_window_objects() {
     publish("__osc_input_handler", &input_handler);
     publish("__osc_factory_queue", &factory_queue);
     publish("__osc_sim_callback_queue", &sim_callback_queue);
+    // A --map launch's game interface came before the window: its world
+    // views take the camera now
+    osc::lua::bind_unbound_world_views(uL);
     // The UI's root frame is the window's, and the options screen
     // lists the display's modes (M217h)
     size_root_frame(uL, root_width, root_height);
