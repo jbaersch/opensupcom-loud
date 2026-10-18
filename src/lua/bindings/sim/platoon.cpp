@@ -94,8 +94,8 @@ static int platoon_GetPlatoonUnits(lua_State* L) {
     int result = lua_gettop(L);
     int idx = 1;
     for (u32 id : platoon->unit_ids()) {
-        auto* e = sim->entity_registry().find(id);
-        if (e && !e->destroyed() && e->lua_table_ref() >= 0) {
+        auto* e = sim->entity_registry().find_retained(id);
+        if (e && e->lua_table_ref() >= 0) {
             lua_pushnumber(L, idx++);
             lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
             lua_rawset(L, result);
@@ -245,11 +245,16 @@ static int platoon_GetPlatoonPosition(lua_State* L) {
     if (!platoon || !sim) { lua_pushnil(L); return 1; }
 
     auto pos = platoon->get_position(sim->entity_registry());
-    // Check if platoon has any units (position will be 0,0,0 if empty)
+    // Moho's GetPlatoonUnits retains members until Unit::~Unit, even after
+    // Destroy queued them for deletion. A later script in this same beat
+    // still sees their position; after the queue drains an empty group is nil.
     bool has_units = false;
     for (u32 id : platoon->unit_ids()) {
-        auto* e = sim->entity_registry().find(id);
-        if (e && !e->destroyed()) { has_units = true; break; }
+        auto* e = sim->entity_registry().find_retained(id);
+        if (e) {
+            has_units = true;
+            break;
+        }
     }
     if (!has_units) { lua_pushnil(L); return 1; }
 

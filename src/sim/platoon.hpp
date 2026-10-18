@@ -48,7 +48,7 @@ public:
     bool has_unit(u32 entity_id) const;
     const std::vector<u32>& unit_ids() const { return unit_ids_; }
 
-    // Compute centroid position of all living units
+    // Compute centroid of members, including units awaiting actual deletion.
     Vector3 get_position(const EntityRegistry& registry) const;
 
     // Plan name

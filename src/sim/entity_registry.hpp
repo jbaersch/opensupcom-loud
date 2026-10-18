@@ -45,6 +45,10 @@ public:
     /// Look up an entity by ID. Returns nullptr if not found.
     Entity* find(u32 id) const;
 
+    /// Platoon membership lasts until Unit's destruction, including the
+    /// deletion queue. World queries must continue to use find().
+    Entity* find_retained(u32 id) const;
+
     /// Whether `e` is a registered entity, asked without reading it: a Lua
     /// handle's pointer may be a platoon's, a brain's, or a freed entity's.
     bool holds(const void* e) const { return live_.count(e) != 0; }
@@ -60,7 +64,7 @@ public:
     size_t count() const { return live_count_; }
 
     /// Free the entities unregistered since the last call. An unregistered
-    /// entity leaves every lookup immediately but its memory lives until
+    /// entity leaves live world lookups immediately but its memory lives until
     /// here: scripts routinely destroy a unit from inside one of its own
     /// callbacks (a structure finishing its upgrade replaces itself), and the
     /// C++ frame that ran the callback is still inside that unit's update.

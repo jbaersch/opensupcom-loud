@@ -47,8 +47,8 @@ Vector3 Platoon::get_position(const EntityRegistry& registry) const {
     f32 sx = 0, sy = 0, sz = 0;
     i32 count = 0;
     for (u32 id : unit_ids_) {
-        auto* e = registry.find(id);
-        if (e && !e->destroyed()) {
+        auto* e = registry.find_retained(id);
+        if (e) {
             sx += e->position().x;
             sy += e->position().y;
             sz += e->position().z;

@@ -112,6 +112,13 @@ Entity* EntityRegistry::find(u32 id) const {
     return id < entities_.size() ? entities_[id].get() : nullptr;
 }
 
+Entity* EntityRegistry::find_retained(u32 id) const {
+    if (auto* entity = find(id)) return entity;
+    for (const auto& entity : graveyard_)
+        if (entity->entity_id() == id) return entity.get();
+    return nullptr;
+}
+
 void EntityRegistry::collect_garbage(const std::function<void(Entity&)>& release) {
     std::vector<std::unique_ptr<Entity>> dead;
     dead.swap(graveyard_);
