@@ -84,9 +84,10 @@ variable. The X11/RANDR failures above are recorded separately.
 
 ## Subsequent platoon lifetime correction
 
-A normal LOUD run exposed a missing platoon position after its final unit called
-`Destroy` earlier in the same beat. World lookups removed the unit immediately,
-although the unit and its script handle remained owned by the deletion queue.
+Investigation of a normal LOUD failure identified a separate lifetime gap:
+world lookups removed a destroyed unit immediately, although the unit and its
+script handle remained owned by the deletion queue. A platoon query therefore
+lost that member before its actual deletion.
 The behavioral reference is [faf-re Unit destruction and platoon membership](https://github.com/Draiget/faf-re/blob/da3926cf0ce39c3124f9748e228a44362d72bf1d/src/sdk/moho/unit/core/Unit.cpp), together with its `CPlatoon::GetPlatoonPosition` binder: membership
 lasts until the unit is actually freed. The independently implemented fix retains
 queued members for platoon-unit and centroid queries, while live world lookups
@@ -94,12 +95,46 @@ still remove them immediately. No LOUD fallback or failure filter was added.
 
 The new synthetic case fails before the fix and passes afterward, including the
 empty/nil result after collection. The Werror build and five platoon/weapon
-lifetime cases (60 assertions) pass. Broader validation of this fix is pending.
+lifetime cases (60 assertions) pass. The full data-free run passed all 1,716
+Catch2 cases, four local multiplayer cases and 17 architecture checks; the
+remaining architecture check detected the outdated documented case count. After
+updating that count, its check also passes. Broader acceptance is still pending.
 
 The first long-run fixture also used a player nickname that prevented one LOUD
 AI from starting its plan with the active custom-AI mods. Those runs are diagnostic
 only. The corrected fixture uses LOUD AI nicknames and checks that both armies
 produce units. It does not alter the installed game scripts.
+
+## Normal-game blockers found in the current content
+
+The same original failure still reproduces at tick 12,859 after the lifetime
+correction: within one beat the last live member transfers to another platoon,
+leaving an empty group before the next cleanup. The LOUD merge code calls
+`VDist3Sq` with that group's nil position. The diagnostic binary produces the
+same complete checksum trace as the uninstrumented candidate. The lifetime
+correction must not be presented as resolving this distinct transfer case.
+
+With the corrected two-AI fixture and all 15 selected mods unchanged:
+
+- The Winged Arena run stops at tick 7,725 on an undefined `self` in the
+  installed engineer-defense builder's priority function.
+- The Seton's Clutch run (seed 4242, cap 3000, No Rush 20) stops at tick 26,957
+  on undefined `LOUDSQRT` in `aibehaviors.lua`. Both AIs produce units; 941
+  units are present at failure. No nonfinite unit poses were recorded.
+
+These are failed acceptance runs, not successful 36,000-tick games. Installed
+scripts, selected mods and failure counting were not changed. The candidate
+remains unsuitable for adoption while these normal-game failures are open.
+No recovery of the historical hang's exact command stream is claimed.
+
+## Current checkpoint
+
+The source fix is committed and the working implementation is buildable. The
+full LLVM-22 ratchet for this newest source state was stopped before completion;
+no final-state lint pass is claimed. The successful 583-unit ratchet above belongs
+to the earlier source state. Large-load comparisons, stable render dumps, remote
+CI and cross-OS replay remain unexecuted for this candidate. It has not been
+adopted into `codex/loud` or made the default gameplay build.
 
 ## Identity and remaining acceptance
 
