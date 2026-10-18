@@ -1181,6 +1181,16 @@ void SimState::set_recording(bool on) {
 }
 
 void SimState::set_game_setup(GameSetup setup) {
+    // UI permission, queued callbacks and the serialized sim use one state.
+    // The latest explicit option wins; missing options revoke old permission.
+    set_cheats_enabled(false);
+    for (const auto& [key, value] : setup.options.values) {
+        if (key == "CheatsEnabled") {
+            set_cheats_enabled(
+                (value.type == GameOptionValue::Type::Boolean && value.bool_value) ||
+                (value.type == GameOptionValue::Type::String && value.string_value == "true"));
+        }
+    }
     recorded_replay_.setup = std::move(setup);
     recorded_replay_.has_setup = true;
 }

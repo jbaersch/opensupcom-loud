@@ -142,6 +142,7 @@ TEST_CASE("Cheat spawn permission comes from the latest authoritative launch opt
         world.setup.options.set_number("CheatsEnabled", 1);
     }
     world.sim.set_game_setup(world.setup);
+    CHECK(world.sim.cheats_option() == permitted);
     world.sim.submit_callback(spawn_request());
     world.sim.tick();
     CHECK(world.sim.entity_registry().count() == (permitted ? 1 : 0));

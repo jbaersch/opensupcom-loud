@@ -2561,7 +2561,7 @@ namespace {
 
 ui::WorldView* cheat_world_view(lua_State* L) {
     const auto* sim = get_sim(L);
-    if (!sim || !sim->cheats_enabled() || sim->playback() || sim->army_count() == 0) return nullptr;
+    if (!sim || !sim->cheats_option() || sim->playback() || sim->army_count() == 0) return nullptr;
     lua_pushstring(L, "__osc_world_view");
     lua_rawget(L, LUA_REGISTRYINDEX);
     auto* view = static_cast<ui::WorldView*>(lua_touserdata(L, -1));

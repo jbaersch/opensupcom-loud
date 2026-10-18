@@ -95,9 +95,10 @@ void apply_game_options_to_sim(const GameOptionsConfig& options,
         } else if (key == "FogOfWar" && value.type == GameOptionValue::Type::String) {
             sim.set_fog_of_war(value.string_value);
         } else if (key == "CheatsEnabled") {
-            // As Moho's lobby launch reads it: the string "true", exactly
-            sim.set_cheats_enabled(value.type == GameOptionValue::Type::String &&
-                                   value.string_value == "true");
+            // Retail/LOUD launchers use a boolean or the exact string "true".
+            sim.set_cheats_enabled(
+                (value.type == GameOptionValue::Type::Boolean && value.bool_value) ||
+                (value.type == GameOptionValue::Type::String && value.string_value == "true"));
         } else if (key == "NoRushOption") {
             no_rush_minutes = option_as_number(value);
         } else if (key == "NoRushRadius") {
