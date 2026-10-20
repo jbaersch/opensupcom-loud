@@ -89,7 +89,25 @@ analysis of the new file. Recomparison uses the complete run's reported
 per-file deltas; it is not a second full clang-tidy run. No baseline allowance
 was added for a new finding.
 
-Final committed-build replay results are recorded in the follow-up below.
+## Final committed-build check
+
+Engine commit `f87915a69560a8577920cab13031967edc14d23b` was rebuilt with its
+own build identity, `OpenSupCom 0.1.0 (f87915a6)`. The normal CMake reproducer
+reaches natural GameOver at tick 13,164 with zero recorded test, Lua-thread or
+source-callback faults. The normal `opensupcom` executable replays the recording
+successfully; the complete 13,164-tick checksum traces are byte-identical.
+The first difference from the old failing run remains tick 12,859.
+
+The complete data-free CTest selection was repeated on this committed build:
+all 1,740 checks pass again. The targeted retail checks above exercised the
+same engine sources before committing; the committed-build LOUD record/replay
+is the final identity check. Later changes to this report do not change the
+tested engine.
+
+The protected original profile, standard launcher and accepted executable
+retain their earlier hashes. All 18 checked installed LOUD inputs also match.
+The focused branch remains local; the unaccepted integration stack is not
+published or adopted into `codex/loud`.
 
 ## Acceptance limits
 
