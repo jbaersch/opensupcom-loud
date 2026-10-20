@@ -25,8 +25,7 @@
 
 namespace osc::sim {
 class Manipulator;
-class AimManipulator;
-} // namespace osc::sim
+}
 namespace osc::blueprints { class BlueprintStore; }
 
 struct lua_State;
@@ -39,6 +38,7 @@ class Terrain;
 namespace osc::sim {
 
 struct SimContext;
+class ArmyBrain;
 class EntityRegistry;
 class SimRandom;
 class SimState;
@@ -177,6 +177,30 @@ struct AirCombatState {
     Vector3 circle_anchor{};
 };
 
+/// What a circling aircraft circles.
+struct CircleAround {
+    Vector3 center;
+    /// Its target weapon's MaxRadius. 0: none, and the circle is
+    /// StartTurnDistance's.
+    f32 weapon_radius = 0.0f;
+    bool target_in_air = false; ///< CirclingRadiusVsAirMult applies
+    /// Where its move order would take it (Moho's mTargetPosition), which
+    /// the airframe's damping reads.
+    Vector3 move_goal;
+};
+
+/// The flight an aircraft's orders leave for its motion step: Moho's
+/// CalcMoveAir flies what the tasks set.
+struct AirCourse {
+    enum class Kind : u8 { None, Run, Circle, Winged, Hold, HoverLow, Settle };
+    Kind kind = Kind::None;
+    u32 target_id = 0;
+    Vector3 at{};
+    f32 altitude = 0.0f;
+    f32 heading = 0.0f;
+    CircleAround around{};
+};
+
 /// A blueprint's Economy.BuildTime, BuildCostMass and BuildCostEnergy (0
 /// where missing): what building it, or repairing it, costs.
 struct BuildEconomy {
@@ -264,6 +288,8 @@ public:
     bool is_being_built() const { return is_being_built_; }
     void set_is_being_built(bool b) { is_being_built_ = b; }
     bool producing() const { return economy_.production_active && !is_being_built_ && !dying_; }
+    /// Whether its last step kept its storage in its army's (Moho's CEconStorage).
+    bool holds_storage() const { return holds_storage_; }
 
     f32 max_speed() const { return max_speed_; }
     void set_max_speed(f32 s) { max_speed_ = s; }
@@ -495,7 +521,7 @@ public:
     void prune_upgrade_chain(lua_State* L);
     /// Sim::RemoveCommandFromUnitQueue: order `id` off the queue, or the rally
     /// orders; the work of a head order stops as Stop stops it.
-    void remove_command(u32 id, EntityRegistry& registry, lua_State* L);
+    void remove_command(u32 id, SimContext& ctx);
     /// IncreaseBuildCountInQueue: `count` more of the index-th group of its
     /// factory queue (1-based, as factory_queue() groups it), after the
     /// group's last order. An index past the queue changes nothing.
@@ -548,8 +574,10 @@ public:
     /// Moho's CUnitCommandQueue::NeedsUIRefresh: a head order of these types
     /// taken off the queue sets the unit's UI refresh flag.
     void note_queue_head();
-    /// Moho's ClearCommandQueue: the head order's build, upgrade or enhancement ends with it.
-    void clear_commands(EntityRegistry& registry, lua_State* L);
+    /// Moho's ClearCommandQueue: the head order's task ends with it, its callbacks now.
+    void clear_commands(SimContext& ctx);
+    /// The tasks of orders no longer at the head end (Moho's task destructors).
+    void end_gone_orders(SimContext& ctx);
     std::vector<UnitCommand*> commands_with_id(u32 id) {
         std::vector<UnitCommand*> out;
         for (UnitCommand& c : command_queue_) {
@@ -565,11 +593,16 @@ public:
         return out;
     }
 
-    /// Per-tick update, in phases: dying or carried (tick_lifecycle), the
-    /// orders (tick_orders), coasting, layer changes and fuel
-    /// (tick_after_orders), then the silo, regeneration, weapons and
-    /// manipulators (tick_upkeep).
+    /// Moho's attacker stage, in its army's step of CArmyImpl::OnTick.
+    void tick_weapons(SimContext& ctx);
+    /// Moho's stage B: its IAiCommandDispatchImpl and the order's task.
+    void tick_commands(f64 dt, SimContext& ctx);
+    /// Moho's stage A: Unit::MotionTick.
     void update(f64 dt, SimContext& ctx);
+    /// Moho's Unit::HandleResourceManagement, the end of its stage-A step.
+    void manage_resources(ArmyBrain* army);
+    /// Moho's CUnitReclaimTask banks what it reclaims in its army.
+    void bank_reclaim(ArmyBrain* army) const;
 
     /// Lua callback helpers: call self:method() or self:method(entity)
     void call_lua_method(lua_State* L, const char* method_name);
@@ -735,6 +768,21 @@ public:
     i32 silo_blocks() const { return silo_blocks_; }
     /// An assisting engineer's build power, `rate`, on the missile under way.
     void assist_silo_build(f32 rate, f64 dt, f32 efficiency);
+    /// The silo whose missile this unit's Guard helps build, else 0.
+    u32 silo_assist_id() const { return silo_assist_id_; }
+    /// What it works on (Moho's CBuildTaskHelper focus), else 0.
+    u32 focus_id() const {
+        if (build_target_id_ != 0) {
+            return build_target_id_;
+        }
+        if (capture_target_id_ != 0) {
+            return capture_target_id_;
+        }
+        if (silo_assist_id_ != 0) {
+            return silo_assist_id_;
+        }
+        return repair_target_id_;
+    }
 
     /// The weapon a launch order uses: the first enabled one with ManualFire
     /// and CountedProjectile (a NukeWeapon for a nuke), OverCharge aside.
@@ -828,7 +876,6 @@ public:
     void set_bank_angle(f32 b) { bank_angle_ = b; }
     f32 current_airspeed() const { return current_airspeed_; }
     void set_current_airspeed(f32 s) { current_airspeed_ = s; }
-    bool take_air_step() { return !std::exchange(air_stepped_, true); }
     f32 current_altitude() const { return current_altitude_; }
     void set_current_altitude(f32 a) { current_altitude_ = a; }
     void fly_on_from_here(const map::Terrain* terrain);
@@ -964,7 +1011,7 @@ public:
     GroundStance ground_stance(const map::Terrain* terrain, f32 x, f32 z,
                                const Quaternion& facing) const;
     f32 ground_y(const map::Terrain* terrain, f32 x, f32 z) const {
-        return ground_stance(terrain, x, z, orientation()).y;
+        return ground_stance(terrain, x, z, pending_orientation()).y;
     }
     void stand_on_ground(const map::Terrain* terrain, Vector3 at, const Quaternion& facing);
     bool snaps_to_ground() const {
@@ -1009,47 +1056,24 @@ public:
     /// CUnitMotion::IsOnValidLayer). A surface unit that can't drowns.
     bool on_valid_layer() const;
 
-    /// How far it moved over its last tick, per second (SimState sets it):
-    /// weapons that LeadTarget aim ahead by it.
+    /// Per second, as of the last commit: off the air layer a mobile unit's own motion step, else
+    /// its move between the last two commits. Weapons that LeadTarget aim ahead by it.
     const Vector3& velocity() const { return velocity_; }
     void set_velocity(const Vector3& v) { velocity_ = v; }
+    void advance_coords() override;
 
     // A killed aircraft's fall (see begin_dying).
     bool is_crashing() const { return crashing_; }
     bool teleporting() const { return teleporting_; }
-    bool crash_impacted() const { return crash_impacted_; }
     f32 crash_velocity_y() const { return crash_velocity_y_; }
     f32 crash_spin_rate() const { return crash_spin_rate_; }
-    /// The landing a falling aircraft made, taken once (SimState then calls
-    /// its script's OnImpact).
-    bool take_crash_impact();
 
     // Misc flags
     u32 creator_id() const { return creator_id_; }
-    /// Whether it moved over the last tick: its position as this tick began
-    /// against the last's (Moho's committed transform against the one
-    /// before). A new unit hasn't.
-    bool moved_last_tick() const { return moved_last_tick_; }
-    /// Where it stood as this tick began (the next tick's moved_last_tick).
-    const Vector3& tick_position() const { return tick_position_; }
-    /// Note where it stands as a tick begins (SimState::tick), and how it
-    /// moved and turned over the last.
-    void note_tick_position() {
-        const Vector3& p = position();
-        const Quaternion& q = orientation();
-        moved_last_tick_ =
-            tick_position_set_ &&
-            (p.x != tick_position_.x || p.y != tick_position_.y || p.z != tick_position_.z);
-        last_tick_motion_ =
-            tick_position_set_
-                ? Vector3{p.x - tick_position_.x, p.y - tick_position_.y, p.z - tick_position_.z}
-                : Vector3{};
-        turned_last_tick_ =
-            tick_position_set_ && (q.x != tick_orientation_.x || q.y != tick_orientation_.y ||
-                                   q.z != tick_orientation_.z || q.w != tick_orientation_.w);
-        tick_position_ = p;
-        tick_orientation_ = q;
-        tick_position_set_ = true;
+    /// Whether its last commit moved it (Moho's current position against the last).
+    bool moved_last_tick() const {
+        return position().x != last_position().x || position().y != last_position().y ||
+               position().z != last_position().z;
     }
     /// Moho's CAnimationManipulator motion scaling (CreateAnimator(unit, true)).
     f32 anim_motion_scale(f32 dt) const;
@@ -1089,7 +1113,11 @@ public:
     /// falls until it lands.
     bool is_dying() const { return dying_; }
     void begin_dying();
-    void tick_dying(f32 dt, const map::Terrain* terrain);
+    /// True on the step it lands.
+    bool tick_dying(f32 dt, const map::Terrain* terrain);
+    bool needs_kill_cleanup() const { return needs_kill_cleanup_; }
+    /// Moho's Unit::KillCleanup (faf-re unit/core/Unit.cpp:16252), at the end of the death tick.
+    void kill_cleanup(lua_State* L);
 
     // Damage/kill flags
     bool can_take_damage() const { return can_take_damage_; }
@@ -1239,6 +1267,10 @@ public:
     bool calls_transport(u32 transport_id) const;
 
     void attach_to_transport(Unit* transport, EntityRegistry& registry, lua_State* L);
+    /// Hang from the transport's bone that holds our slot (or sit at its
+    /// origin without one): our AttachPoint bone, or centre, on it, facing
+    /// as it does.
+    void hang_from(const Unit& transport);
 
     // Carrier storage (M206q; Moho's CAiTransportImpl storage): units a
     // carrier keeps inside -- the aircraft it builds -- beside its cargo
@@ -1298,11 +1330,8 @@ public:
     /// than dropping cargo: a CARRIER that is an air (or pod) staging
     /// platform, with something stored (Moho's dispatch of TransportUnload).
     bool launches_on_unload() const;
-    /// Drop the cargo (all of it, or those of `ids` still aboard, in cargo
-    /// order): each is set down where it hung, level, and on the ground when
-    /// `terrain` is given (M206n).
-    void detach_all_cargo(EntityRegistry& registry, lua_State* L,
-                          const map::Terrain* terrain = nullptr);
+    /// Drop those of `ids` still aboard, in cargo order: each is set down
+    /// where it hung, level, and on the ground when `terrain` is given (M206n).
     void detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L,
                       const map::Terrain* terrain = nullptr);
     /// Whether the unit's footprint fits the ground where it is (Moho's
@@ -1337,9 +1366,6 @@ public:
     Manipulator* add_manipulator(std::unique_ptr<Manipulator> m);
     void remove_manipulator(Manipulator* m);
     void tick_manipulators(f32 dt, lua_State* L);
-    /// A weapon controller advances once after this tick's body motion and
-    /// fresh target selection; publish its pose before its weapon fires.
-    void tick_weapon_aim(AimManipulator& aim, f32 dt, lua_State* L);
     /// Moho's CCollisionManipulator::ManipulatorUpdate, once the pose has
     /// moved: each enabled collision detector's watched bones that crossed
     /// their line this tick, told to the script as
@@ -1481,9 +1507,14 @@ public:
 private:
     void call_on_reclaimed(u32 target_id, EntityRegistry& registry, lua_State* L);
     void run_on_reclaimed(Entity& target, lua_State* L);
-    /// Move along the navigator's path, no faster than `speed_cap` if set (a
-    /// formation keeping its slowest unit's pace).
-    bool nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap = 0);
+    /// Ask for this tick's step along the navigator's path, no faster than
+    /// `speed_cap` if set (a formation keeping its slowest unit's pace). True
+    /// while the move goes on, as the last motion step left it.
+    bool nav_update(f32 speed_cap = 0);
+    bool nav_step(f64 dt, const map::Terrain* terrain);
+    void set_course(const AirCourse& course);
+    /// Moho's one CalcMove* a tick: the course its orders set, else its navigator's step.
+    bool step_course(f64 dt, SimContext& ctx);
     /// Moho's CAiNavigatorAir::AbortMove for an aircraft.
     void stop_air();
     /// Moho's Unit::UpdateSpeedThroughStatus.
@@ -1492,7 +1523,7 @@ private:
     /// unit): nav_update, first asking again for a path the pathfinder put
     /// off (the navigator keeps a throttled request without retrying it).
     /// True until the unit gets there.
-    bool approach_update(f64 dt, SimContext& ctx);
+    bool approach_update(SimContext& ctx);
     /// An order that walked toward its target lets the navigator go when it
     /// ends before it got there (its target gone, taken or whole): Moho's
     /// task ends its move with it, so the unit isn't left Moving.
@@ -1505,10 +1536,9 @@ private:
         if (navigator_.busy()) navigator_.abort_move();
     }
 
-    // update's phases. Each but the last says whether the tick goes on.
-    /// Dying (the death animation), or carried (following the transport):
-    /// nothing else this tick.
-    bool tick_lifecycle(f64 dt, SimContext& ctx);
+    bool attached() const;
+    void take_attached_step(f64 dt, SimContext& ctx);
+    void stay_aboard(f64 dt, SimContext& ctx);
     /// Run orders from the head of the queue until one holds (unit_orders.cpp).
     bool tick_orders(f64 dt, SimContext& ctx, f32 econ_eff);
     /// An order's first run (on a patrol, each leg's): what Moho's task
@@ -1516,22 +1546,26 @@ private:
     /// targets of an immobile NeedUnpack unit, so its weapon packs up and
     /// the unit can go.
     void begin_order(UnitCommand& cmd, lua_State* L);
-    /// Coasting, amphibious layer changes, fuel.
-    bool tick_after_orders(f64 dt, SimContext& ctx);
-    /// A silo assist ended, regeneration, the silo, motion events, weapons,
-    /// manipulators. Runs while paused too.
-    void tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting_silo);
+    /// Moho's CAiAttackerImpl::SetDesiredTarget: every weapon drops its
+    /// target. False when a script took the unit or the order.
+    bool engage(UnitCommand& cmd, lua_State* L);
+    /// Fuel, the layer, the step its orders asked for, coasting.
+    bool motion_tick(f64 dt, SimContext& ctx);
+    void take_step(f64 dt, SimContext& ctx);
+    void tick_silo(f64 dt, SimContext& ctx);
+    void tick_upkeep(f64 dt, SimContext& ctx);
+    void end_silo_assist(lua_State* L, EntityRegistry& registry);
     void tend_unfinished(SimContext& ctx);
     void decay(lua_State* L);
 
     // The order handlers (unit_orders.cpp), one per kind of order.
     OrderStep run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     OrderStep order_stop(lua_State* L);
-    OrderStep order_move(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_move(UnitCommand& cmd, SimContext& ctx);
     /// Close to the best weapon's range of the target, and stay on it.
-    OrderStep order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_attack(UnitCommand& cmd, SimContext& ctx);
     /// An Attack with no target unit: at a point on the ground.
-    OrderStep order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_attack_ground(UnitCommand& cmd, SimContext& ctx);
     /// Reach the site, start the structure, build it.
     OrderStep order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// A factory's build, or an upgrade: started where the unit stands.
@@ -1554,7 +1588,7 @@ private:
     /// still at the head -- the brain's scripts ran) waits kTaskRetryTicks.
     OrderStep hold_for_unit_cap(u32 command_id);
     /// Go to the point, then queue it again at the back.
-    OrderStep order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_patrol(UnitCommand& cmd, SimContext& ctx);
     /// An enemy a patrol on leg `cmd` breaks off to attack (Moho's
     /// CUnitPatrolTask::FindTarget), or null.
     Entity* find_patrol_target(const UnitCommand& cmd, SimContext& ctx);
@@ -1566,11 +1600,11 @@ private:
     /// or nothing while the guard goes on as before. `ref` is what it
     /// guards: the guarded unit's position, or the point.
     std::optional<OrderStep> guard_engage(UnitCommand& cmd, const Unit* guarded, const Vector3& ref,
-                                          f64 dt, SimContext& ctx);
+                                          SimContext& ctx);
     /// A Guard of a point: go there, and take on enemies near it.
-    OrderStep order_guard_point(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_guard_point(UnitCommand& cmd, SimContext& ctx);
     /// Head for `goal`, setting a new path only when it moved by a unit.
-    void walk_to(const Vector3& goal, f64 dt, SimContext& ctx);
+    void walk_to(const Vector3& goal, SimContext& ctx);
     /// Moho's FindBestEnemy with the unit's primary weapon: of `candidates`
     /// (in id order), the enemy within `range` (XZ) of the unit it takes on
     /// first, or null (unit_patrol.cpp).
@@ -1617,7 +1651,7 @@ private:
     /// other units within 10; past that, it comes back to just clear of it.
     /// Never ends: Hold.
     OrderStep guard_follow(const Unit& target, bool working,
-                           const std::optional<Vector3>& winged_goal, f64 dt, SimContext& ctx);
+                           const std::optional<Vector3>& winged_goal, SimContext& ctx);
     /// A guard order ends: a factory's assisted build (M206h) is cancelled,
     /// as a factory's build is when its order goes; an assist just stops.
     void end_guard_build(EntityRegistry& registry, lua_State* L);
@@ -1636,8 +1670,9 @@ private:
     void tick_dive(const map::Terrain* terrain, lua_State* L);
     /// An idle aircraft's landing (Moho's CUnitMotion landing phase):
     /// AutoLandTime after its orders ran out, near where it is, it finds a
-    /// place (PrepareMove), reserves it and comes down onto it.
-    void tick_idle_landing(f64 dt, SimContext& ctx);
+    /// place (PrepareMove), reserves it and comes down onto it. True if it
+    /// moved the aircraft.
+    bool tick_idle_landing(f64 dt, SimContext& ctx, bool flown);
     /// faf-re CUnitMotion::MotionTick: CalcMoveAir every tick; CAiNavigatorAir::AbortMove target.
     void fly_unflown_tick(f64 dt, SimContext& ctx);
     void rest_air_body();
@@ -1645,8 +1680,8 @@ private:
     /// focus while Building, Repairing, Reclaiming or Capturing).
     bool circles_its_work() const;
     /// Its circling this tick: round what it builds or repairs, or round
-    /// where it stopped to reclaim or capture.
-    void tick_work_circling(f64 dt, SimContext& ctx);
+    /// where it stopped to reclaim or capture. True if it flew.
+    bool tick_work_circling(f64 dt, SimContext& ctx, bool flown);
     /// A landed aircraft given an order goes back to the air.
     void take_off(SimContext& ctx);
     OrderStep order_enhance(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
@@ -1660,19 +1695,19 @@ private:
     int tick_script_task(lua_State* L);
     /// A load order (M206m, Moho's shared TransportLoadUnits): the transport
     /// it targets runs the pickup, and the units it carries call it.
-    OrderStep order_transport_load(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_transport_load(UnitCommand& cmd, SimContext& ctx);
     /// The transport's side (CUnitLoadUnits): slots for the units calling
     /// it, a flight to their centre, a low hover while they board.
-    OrderStep order_transport_pickup(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_transport_pickup(UnitCommand& cmd, SimContext& ctx);
     /// A unit's side (CUnitCallTransport): to its place, then a beam up.
-    OrderStep order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_call_transport(UnitCommand& cmd, SimContext& ctx);
     /// End the pickup: slots of units that never came are given up.
     void finish_pickup(bool completed, lua_State* L);
     /// A transport at its drop (M206n, Moho's CUnitUnloadUnits): it comes
     /// down to its hover height, then sets down the cargo (`ids`, or all of
     /// it) whose footprint fits the ground under it; the rest stays aboard.
     /// True once it has set them down.
-    bool unload_step(f64 dt, SimContext& ctx, const std::vector<u32>& ids);
+    bool unload_step(SimContext& ctx, const std::vector<u32>& ids);
     /// A beam up cut short: back down on the ground, level, and the script
     /// told it has stopped.
     void abandon_beam_up(const map::Terrain* terrain, lua_State* L);
@@ -1682,13 +1717,11 @@ private:
     /// ShouldHoverInsteadOfLand): MovingDown, then the Hover event. True there.
     bool hover_low(f64 dt, SimContext& ctx);
     /// A transport flies to the point and drops all its cargo.
-    OrderStep order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_transport_unload(UnitCommand& cmd, SimContext& ctx);
     /// An aircraft's refuel at a staging platform (M206r, Moho's CUnitRefuel):
     /// a slot, the flight to its bone, docking, and the climb away once full.
-    OrderStep order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx);
-    /// A tick of a unit attached to a staging platform: its refuel order, if
-    /// that is still its head, and its fuel and repair.
-    void tick_docked(f64 dt, SimContext& ctx, Unit& platform);
+    OrderStep order_refuel(UnitCommand& cmd, SimContext& ctx);
+    void tick_docked(SimContext& ctx, Unit& platform);
     /// A patrolling aircraft that needs fuel or repair (Moho's
     /// Unit::FindPlatform): the first of its army's idle staging platforms
     /// in reach with room for it; null when it needs none or finds none.
@@ -1697,7 +1730,7 @@ private:
     /// docked at `platform`, and burns in flight. False if a script killed it.
     bool tick_fuel(f64 dt, SimContext& ctx, Unit* platform);
     /// An aircraft ordered aboard a carrier (M206s): it lands, and is stored.
-    OrderStep order_carrier_landing(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_carrier_landing(UnitCommand& cmd, SimContext& ctx);
     /// A carrier's share of a load order onto it (Moho's CUnitCarrierRetrieve):
     /// it stops (surfacing, if under water) and waits while its aircraft land.
     OrderStep order_carrier_retrieve(UnitCommand& cmd, SimContext& ctx);
@@ -1708,27 +1741,29 @@ private:
     /// place, fly in, wait its turn, come down, be stored. `refuel`: landing
     /// to refuel, which needs the carrier idle rather than loading.
     enum class LandStep : u8 { Landing, Stored, Failed };
-    LandStep carrier_land_step(Unit& carrier, bool refuel, f64 dt, SimContext& ctx);
+    LandStep carrier_land_step(Unit& carrier, bool refuel, SimContext& ctx);
     /// A landing given up: its place and its loading state go.
     void abandon_landing(EntityRegistry& registry);
     /// Fly to `at` until it is within the unit's turning circle, then glide
     /// over it, coming down to `y` turned to `heading` (M206r's approach).
-    /// True once settled there.
-    bool settle_over(const Vector3& at, f32 heading, bool& glided, f64 dt, SimContext& ctx);
+    /// True once its last step settled it there, facing within `facing_cos`.
+    bool settle_over(const Vector3& at, f32 heading, bool& glided, SimContext& ctx,
+                     std::optional<f32> facing_cos = std::nullopt);
+    void settle_step(const Vector3& at, f32 heading, f64 dt, const map::Terrain* terrain);
     /// A staging platform's unload (M206r): its aircraft go from where they
     /// sit to the drop point.
     OrderStep order_staging_release(UnitCommand& cmd, SimContext& ctx);
     /// A carrier's unload: its stored units are launched (M206q).
     OrderStep order_carrier_launch(UnitCommand& cmd, SimContext& ctx);
     /// A nuke, a tactical missile or an OverCharge, by its weapon.
-    OrderStep order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx);
-    OrderStep order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_launch(UnitCommand& cmd, SimContext& ctx);
+    OrderStep order_sacrifice(UnitCommand& cmd, SimContext& ctx);
     /// Handed to the script, and held until the warp.
     OrderStep order_teleport(UnitCommand& cmd, lua_State* L);
     /// A ferry's cycle along its route (the leading Ferry orders).
-    OrderStep order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_ferry(UnitCommand& cmd, SimContext& ctx);
     /// Wait at a beacon until a ferry takes the unit, then board it.
-    OrderStep order_wait_for_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_wait_for_ferry(UnitCommand& cmd, SimContext& ctx);
 
     std::string unit_id_;
     std::string armor_type_ = "Default";
@@ -1908,10 +1943,6 @@ private:
     // a transport picks up its largest units first.
     f32 size_x_ = 1.0f, size_y_ = 1.0f, size_z_ = 1.0f;
     f32 average_density_ = 0.49f;
-    /// Hang from the transport's bone that holds our slot (or sit at its
-    /// origin without one): our AttachPoint bone, or centre, on it, facing
-    /// as it does.
-    void hang_from(const Unit& transport);
     /// Give up slots whose unit is no longer aboard (it died, was taken off
     /// the cargo list, or left), as Moho's TransportUnreserveUnattachedSpots.
     void release_stale_slots(const EntityRegistry& registry);
@@ -1926,7 +1957,8 @@ private:
     std::deque<bool> silo_orders_; // builds ordered, oldest first (true: a nuke)
     SiloBuild silo_build_;
     i32 silo_blocks_ = 0;
-    bool assisting_silo_ = false; // this tick, a Guard lent a silo its build power
+    u32 silo_assist_id_ = 0;           // the silo a Guard lends its build power, Repairing it
+    bool silo_assist_renewed_ = false; // ...lent this tick
     // Orders handed to the script (M206d): a teleport charging (and the snap
     // count its warp will change), an OverCharge weapon switched on.
     bool teleporting_ = false;
@@ -1963,10 +1995,12 @@ private:
     /// already keeps there, else a new one from AI.BeaconName. 0 without one.
     u32 ferry_beacon(SimContext& ctx, UnitCommand& head);
     /// Fly a ferry leg toward `to`; true while under way.
-    bool ferry_fly(f64 dt, SimContext& ctx, const Vector3& to, bool through = false);
+    bool ferry_fly(SimContext& ctx, const Vector3& to, bool through = false);
     /// A teleport or an OverCharge whose order went unfinished: the script
     /// hears OnFailedTeleport, or the weapon OnDisableWeapon.
     void settle_interrupted_orders(lua_State* L);
+    bool end_gone_loading(SimContext& ctx);
+    bool end_gone_tasks(SimContext& ctx);
     /// Take the missile under way off the silo: its request, the unit
     /// state. The script hears nothing: it was not finished (the Yolona
     /// Oss's tells a cancel by the state going without OnSiloBuildEnd).
@@ -1995,6 +2029,7 @@ private:
     /// Docked and damaged, it asked its army for its repair last tick: the
     /// heal comes from the next tick (Moho's economy request).
     bool dock_repair_asked_ = false;
+    bool holds_storage_ = false;
     bool air_class_ = false;     // Transport.AirClass
     i32 docking_slots_ = 0;      // Transport.DockingSlots
     StagingRules staging_rules_; // a staging platform's service
@@ -2005,8 +2040,9 @@ private:
     f32 pitch_ = 0;              // pitch in radians (visual only for dive/climb)
     f32 bank_angle_ = 0;         // roll in radians (visual banking on turns)
     f32 current_airspeed_ = 0;   // current speed (ramps toward max_airspeed_)
-    bool air_stepped_ = false;
-    bool air_held_ = false;
+    bool nav_requested_ = false;
+    AirCourse course_;
+    f32 nav_speed_ = 0;
     f32 current_altitude_ = 0;   // actual Y offset above terrain
     f32 max_airspeed_ = 0;       // from blueprint Air.MaxAirspeed (fallback: max_speed_)
     f32 turn_rate_rad_ = 0;      // yaw rate rad/s, from Air.TurnSpeed (rad/s)
@@ -2030,22 +2066,16 @@ private:
     std::string vert_event_ = "Top";
     // Air crash state
     bool crashing_ = false;
-    bool crash_impacted_ = false; // set on landing, taken by SimState
     Vector3 velocity_{};
+    Vector3 motion_step_{};
     f32 crash_velocity_y_ = 0;
     f32 crash_spin_rate_ = 0;
     // Misc flags
     u32 creator_id_ = 0;
-    Vector3 tick_position_{};        // where it stood as this tick began
-    Quaternion tick_orientation_{};
-    bool tick_position_set_ = false; // (none before its first tick)
-    bool moved_last_tick_ = false;
     bool lifts_off_ = false;
     /// The order running as a Warp aborted its move (its command id, 0:
     /// none): a Move order so tagged ends (warp()).
     u32 warp_aborted_command_ = 0;
-    Vector3 last_tick_motion_;      // its move over the last tick
-    bool turned_last_tick_ = false; // and whether it turned
     bool auto_overcharge_ = false;
     bool overcharge_paused_ = false;
     bool cloaked_ = false;
@@ -2068,6 +2098,7 @@ private:
     f32 blueprint_elevation_ = 0;
     f32 blueprint_elevation_target_ = 18.0f;
     bool dying_ = false;             ///< killed; see begin_dying
+    bool needs_kill_cleanup_ = false;
     bool transferred_ = false;       ///< replaced; see set_transferred
     // OnUnitBuilt callbacks (function + category filter)
     std::vector<UnitBuiltCallback> on_unit_built_callbacks_;

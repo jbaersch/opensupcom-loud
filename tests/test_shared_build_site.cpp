@@ -102,6 +102,7 @@ struct SharedBuildWorld {
         lua_getglobal(lua.raw(), "BuilderClass");
         lua_setmetatable(lua.raw(), table);
         raw->set_lua_table_ref(luaL_ref(lua.raw(), LUA_REGISTRYINDEX));
+        raw->manage_resources(sim.get_army(army));
         sim.get_army(army)->economy().mass.stored = 1e6;
         sim.get_army(army)->economy().energy.stored = 1e6;
         return raw;
@@ -178,7 +179,13 @@ TEST_CASE("Shared site helpers survive the primary builder stopping and retain q
     world.tick(8);
     REQUIRE(world.sites().size() == 1);
     auto* site = world.sites()[0];
-    first->clear_commands(world.sim.entity_registry(), world.lua.raw());
+    {
+        auto ctx = world.sim.sim_context();
+
+        ctx.L = world.lua.raw();
+
+        first->clear_commands(ctx);
+    }
     world.tick();
     const float before = site->fraction_complete();
     world.tick();
@@ -200,7 +207,13 @@ TEST_CASE("Stopping a shared helper removes only its contribution", "[build][sha
     world.tick(8);
     REQUIRE(world.sites().size() == 1);
     auto* site = world.sites()[0];
-    helper->clear_commands(world.sim.entity_registry(), world.lua.raw());
+    {
+        auto ctx = world.sim.sim_context();
+
+        ctx.L = world.lua.raw();
+
+        helper->clear_commands(ctx);
+    }
     world.tick();
     const float before = site->fraction_complete();
     world.tick();

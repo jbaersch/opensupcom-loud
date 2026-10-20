@@ -178,6 +178,7 @@ TEST_CASE("Air avoidance does not move parked, carried or unfinished aircraft",
         // A carried unit follows its carrier; set their initial coordinates
         // alike so native attachment motion cannot masquerade as avoidance.
         first->set_position(other->position());
+        first->place_now();
     }
     const Vector3 a = first->position();
     const Vector3 b = other->position();

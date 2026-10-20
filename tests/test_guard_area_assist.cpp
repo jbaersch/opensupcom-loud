@@ -116,6 +116,7 @@ struct AreaWorld {
         lua_getglobal(lua.raw(), "AreaClass");
         lua_setmetatable(lua.raw(), -2);
         raw->set_lua_table_ref(luaL_ref(lua.raw(), LUA_REGISTRYINDEX));
+        raw->manage_resources(sim.get_army(army));
         sim.get_army(army)->economy().mass.stored = 1e6;
         sim.get_army(army)->economy().energy.stored = 1e6;
         return raw;
@@ -269,6 +270,7 @@ TEST_CASE("Point assist rejects moving, airborne, enemy and out-of-box candidate
     }
     SECTION("outside the point's search box") {
         ignored->set_position({81, kY, 60});
+        ignored->place_now();
     }
     AreaWorld::guard(*worker, {60, kY, 60});
     world.tick(8);
@@ -372,7 +374,13 @@ TEST_CASE("GetFocusUnit exposes a repair target, retires it on stop and preserve
     REQUIRE(worker->repair_target_id() == target->entity_id());
     CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(AreaWorker) == AreaTarget)")
               .ok());
-    worker->clear_commands(world.sim.entity_registry(), world.lua.raw());
+    {
+        auto ctx = world.sim.sim_context();
+
+        ctx.L = world.lua.raw();
+
+        worker->clear_commands(ctx);
+    }
     world.tick(); // clearing the queue retires its repair on the next unit update
     CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(AreaWorker) == nil)").ok());
 
@@ -391,7 +399,13 @@ TEST_CASE("GetFocusUnit exposes a repair target, retires it on stop and preserve
     CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(AreaWorker) == AreaTarget)")
               .ok());
     worker->set_capture_target_id(0);
-    worker->clear_commands(world.sim.entity_registry(), world.lua.raw());
+    {
+        auto ctx = world.sim.sim_context();
+
+        ctx.L = world.lua.raw();
+
+        worker->clear_commands(ctx);
+    }
     CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(AreaWorker) == nil)").ok());
 }
 
@@ -410,7 +424,13 @@ TEST_CASE("Assisting work items respects helper stop, target cancellation, pause
         return missile ? target->silo_build().progress : target->work_progress();
     };
     SECTION("stopping the helper leaves the owner's work and costs intact") {
-        worker->clear_commands(world.sim.entity_registry(), world.lua.raw());
+        {
+            auto ctx = world.sim.sim_context();
+
+            ctx.L = world.lua.raw();
+
+            worker->clear_commands(ctx);
+        }
         const double before = progress();
         world.tick();
         CHECK(progress() - before == Catch::Approx(10.0 / 100.0 * 0.1));
@@ -432,7 +452,13 @@ TEST_CASE("Assisting work items respects helper stop, target cancellation, pause
         }
     }
     SECTION("cancelling the owner's work releases the helper but keeps its area order") {
-        target->clear_commands(world.sim.entity_registry(), world.lua.raw());
+        {
+            auto ctx = world.sim.sim_context();
+
+            ctx.L = world.lua.raw();
+
+            target->clear_commands(ctx);
+        }
         target->stop_silo_build();
         world.tick(2);
         CHECK_FALSE(worker->is_repairing());
@@ -458,7 +484,13 @@ TEST_CASE("Assisting work items respects helper stop, target cancellation, pause
         CHECK(progress() - resumed == Catch::Approx(20.0 / 100.0 * 0.1));
     }
     SECTION("a different work item uses its own time and costs") {
-        target->clear_commands(world.sim.entity_registry(), world.lua.raw());
+        {
+            auto ctx = world.sim.sim_context();
+
+            ctx.L = world.lua.raw();
+
+            target->clear_commands(ctx);
+        }
         target->stop_silo_build();
         world.start_work(*target, missile, true);
         world.tick(8);
@@ -491,7 +523,13 @@ TEST_CASE("Area assistance requires REPAIR or REBUILDER capability and a rebuild
     // Keep the first anchor at the head and a candidate-position anchor
     // behind it in the rebuilder section.
     if (expected) {
-        worker->clear_commands(world.sim.entity_registry(), world.lua.raw());
+        {
+            auto ctx = world.sim.sim_context();
+
+            ctx.L = world.lua.raw();
+
+            worker->clear_commands(ctx);
+        }
         AreaWorld::guard(*worker, {59, kY, 59});
         AreaWorld::guard(*worker, site->position(), false);
     }

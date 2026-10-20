@@ -152,6 +152,9 @@ struct UnitCommand {
     /// formation then).
     bool has_slot = false;
     Vector3 slot_offset;
+    /// An Attack's target point on its unit (Moho's CAiTarget targetPoint);
+    /// -1: the unit's centre.
+    i32 target_point = -1;
     /// A TransportUnload's cargo to drop, chosen when the order is issued
     /// (IssueTransportUnloadSpecific's category, as Moho's
     /// UNITCOMMAND_TransportUnloadSpecificUnits carries its unit set). The
@@ -184,9 +187,8 @@ struct UnitCommand {
     /// from where it arrives or gives up (build, repair, reclaim, capture;
     /// see sim/work_range.hpp); runtime state.
     bool approached = false;
-    /// A winged aircraft's attack: it has come within a weapon's reach or
-    /// its EngageDistance, and flies its runs now (runtime state; Moho's
-    /// desired target, set until the order ends).
+    /// The attack has handed its target to the attacker (Moho's desired target): within a weapon's
+    /// reach, or an aircraft's EngageDistance. Runtime state.
     bool engaged = false;
     /// A parked attack's ticks until it next asks its unit to face its target
     /// AttackAngle off (Moho's attack task returns 10). Runtime state.

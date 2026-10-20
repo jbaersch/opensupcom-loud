@@ -370,9 +370,10 @@ BonePose rest_frame_world(const Unit& unit, i32 bone) {
     const f32 s = unit.bone_data()->model_scale;
     const Vector3 model_pos{(parent.position.x + offset.x) * s, (parent.position.y + offset.y) * s,
                             (parent.position.z + offset.z) * s};
-    const Vector3 world = quat_rotate(unit.orientation(), model_pos);
-    return {{unit.position().x + world.x, unit.position().y + world.y, unit.position().z + world.z},
-            quat_multiply(unit.orientation(), model_rot)};
+    const Vector3 world = quat_rotate(unit.pending_orientation(), model_pos);
+    const Vector3& at = unit.pending_position();
+    return {{at.x + world.x, at.y + world.y, at.z + world.z},
+            quat_multiply(unit.pending_orientation(), model_rot)};
 }
 
 bool descends_from(const BoneData& bd, i32 bone, i32 ancestor) {
@@ -443,6 +444,25 @@ Quaternion shortest_arc(const Vector3& from, const Vector3& to) {
             from.x * half.y - from.y * half.x, w};
 }
 
+// faf-re BlendOrientationDeltaByMaxAngle, shared by CThrustManipulator and
+// CSlaveManipulator
+bool turn_at_most(Quaternion& orientation, const Quaternion& target, f32 max_angle) {
+    Quaternion delta = quat_multiply(quat_conjugate(orientation), target);
+    if (delta.w < 0.0f) {
+        delta = {-delta.x, -delta.y, -delta.z, -delta.w};
+    }
+    const f32 angle = 2.0f * osc::dmath::acos(std::min(delta.w, 1.0f));
+    if (angle <= max_angle) {
+        orientation = target;
+        return true;
+    }
+    const Vector3 axis = normalized_or_zero({delta.x, delta.y, delta.z});
+    const f32 s = osc::dmath::sin(max_angle * 0.5f);
+    const Quaternion step{axis.x * s, axis.y * s, axis.z * s, osc::dmath::cos(max_angle * 0.5f)};
+    orientation = quat_multiply(orientation, step);
+    return false;
+}
+
 Quaternion bone_model_rotation(const PoseLocals& pose, const BoneData& bd, i32 bone) {
     Quaternion q = pose.local[static_cast<size_t>(bone)].rotation;
     for (i32 b = bone;;) {
@@ -495,20 +515,7 @@ Quaternion ThrustManipulator::turn_toward(const Vector3& local_force) {
     const Vector3 capped{std::min(cap_max_.x, std::max(cap_min_.x, local_force.x)),
                          std::min(cap_max_.y, std::max(cap_min_.y, local_force.y)),
                          std::min(cap_max_.z, std::max(cap_min_.z, local_force.z))};
-    const Quaternion target = shortest_arc(rest_, normalized_or_zero(capped));
-    Quaternion delta = quat_multiply(quat_conjugate(orientation_), target);
-    if (delta.w < 0.0f) {
-        delta = {-delta.x, -delta.y, -delta.z, -delta.w};
-    }
-    const f32 angle = 2.0f * osc::dmath::acos(std::min(delta.w, 1.0f));
-    if (angle <= turn_speed_) {
-        orientation_ = target;
-        return orientation_;
-    }
-    const Vector3 axis = normalized_or_zero({delta.x, delta.y, delta.z});
-    const f32 s = osc::dmath::sin(turn_speed_ * 0.5f);
-    const Quaternion step{axis.x * s, axis.y * s, axis.z * s, osc::dmath::cos(turn_speed_ * 0.5f)};
-    orientation_ = quat_multiply(orientation_, step);
+    turn_at_most(orientation_, shortest_arc(rest_, normalized_or_zero(capped)), turn_speed_);
     return orientation_;
 }
 
@@ -519,8 +526,39 @@ void ThrustManipulator::apply_pose(PoseLocals& pose) {
         return;
     }
     const Quaternion world =
-        quat_multiply(owner_->orientation(), bone_model_rotation(pose, *bd, bone_index_));
+        quat_multiply(owner_->pending_orientation(), bone_model_rotation(pose, *bd, bone_index_));
     pose.rotate(bone_index_, turn_toward(quat_rotate(quat_conjugate(world), force_)));
+}
+
+// ---------------------------------------------------------------------------
+// SlaverManipulator
+// ---------------------------------------------------------------------------
+
+void SlaverManipulator::set_max_rate(f32 degrees_per_second) {
+    max_rate_rad_ = degrees_per_second * kDegToRad;
+}
+
+void SlaverManipulator::tick(f32 dt) {
+    if (max_rate_rad_ < 0.0f) {
+        current_ = master_turn_;
+        at_goal_ = true;
+        return;
+    }
+    at_goal_ = turn_at_most(current_, master_turn_, max_rate_rad_ * dt);
+}
+
+void SlaverManipulator::after_pose(const PoseLocals& pose) {
+    const BoneData* bd = owner_ ? owner_->bone_data() : nullptr;
+    if (!bd || !pose.valid(master_bone_) || !bd->is_valid(master_bone_)) {
+        return;
+    }
+    const Quaternion& rest = bd->bones[static_cast<size_t>(master_bone_)].local_rotation;
+    const Quaternion& now = pose.local[static_cast<size_t>(master_bone_)].rotation;
+    if (now.x == rest.x && now.y == rest.y && now.z == rest.z && now.w == rest.w) {
+        master_turn_ = {};
+        return;
+    }
+    master_turn_ = quat_multiply(quat_conjugate(rest), now);
 }
 
 // ---------------------------------------------------------------------------
@@ -705,7 +743,8 @@ void BoneEntityManipulator::apply_pose(PoseLocals& pose) {
     const BonePose world =
         target->is_unit() ? static_cast<const Unit*>(target)->bone_world_transform(target_bone_)
                           : BonePose{target->position(), target->orientation()};
-    const BonePose model = pose_relative({owner_->position(), owner_->orientation()}, world);
+    const BonePose model =
+        pose_relative({owner_->pending_position(), owner_->pending_orientation()}, world);
     const BoneData* bd = owner_->bone_data();
     const f32 s = bd && bd->model_scale > 0.0f ? bd->model_scale : 1.0f;
     pose.set_model(bone_index_, {{model.position.x / s, model.position.y / s, model.position.z / s},

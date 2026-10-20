@@ -39,6 +39,13 @@ struct DynamicWorld {
         sim.set_game_setup(setup);
     }
 
+    static bool drive(osc::sim::Unit& unit, float speed, double dt,
+                      const osc::map::Terrain* terrain) {
+        const bool moved = unit.navigator().update(unit, speed, dt, terrain);
+        unit.advance_coords();
+        return moved;
+    }
+
     static std::vector<osc::u8> nav_bytes(const osc::sim::Navigator& nav) {
         std::vector<osc::u8> bytes;
         osc::sim::StateWriter writer(bytes);
@@ -52,6 +59,7 @@ struct DynamicWorld {
         unit->set_motion_type("RULEUMT_Land");
         unit->set_layer("Land");
         unit->set_position({17, 10, 65});
+        unit->place_now();
         unit->set_orientation(osc::sim::euler_to_quat(1.5707964f, 0, 0));
         unit->set_max_health(100);
         unit->set_health(100);
@@ -74,6 +82,7 @@ struct DynamicWorld {
         unit->set_motion_type("RULEUMT_None");
         unit->add_category("STRUCTURE");
         unit->set_position({x, 10, z});
+        unit->place_now();
         unit->set_footprint_size(sx, sz);
         unit->set_max_health(100);
         unit->set_health(100);
@@ -182,7 +191,7 @@ TEST_CASE("A short-step obstruction check preserves factory escape and catches a
         unit.navigator().set_goal({41, 10, 65}, world.sim.pathfinder(), unit.position(), "Land");
         REQUIRE(unit.navigator().is_moving());
         for (int tick = 0; tick < 100; ++tick)
-            unit.navigator().update(unit, 8, 0.1, world.sim.terrain());
+            DynamicWorld::drive(unit, 8, 0.1, world.sim.terrain());
         CHECK(unit.position().x > 40);
         CHECK_FALSE(unit.navigator().busy());
     }
@@ -190,7 +199,7 @@ TEST_CASE("A short-step obstruction check preserves factory escape and catches a
         unit.navigator().set_goal({111, 10, 65}, world.sim.pathfinder(), unit.position(), "Land");
         world.structure(65, 65, 8, 24);
         const auto before = unit.position();
-        REQUIRE(unit.navigator().update(unit, 80, 1.0, world.sim.terrain()));
+        REQUIRE(DynamicWorld::drive(unit, 80, 1.0, world.sim.terrain()));
         CHECK(unit.position().x == before.x);
         CHECK(unit.position().z == before.z);
         CHECK(unit.navigator().status() == osc::sim::Navigator::Status::WaitingForPath);
@@ -206,7 +215,7 @@ TEST_CASE("Unrelated structures retain accepted routes and air movement ignores 
         const auto before = DynamicWorld::nav_bytes(unit.navigator());
         world.structure(65, 105, 8, 8);
         CHECK(DynamicWorld::nav_bytes(unit.navigator()) == before);
-        REQUIRE(unit.navigator().update(unit, 8, 0.1, world.sim.terrain()));
+        REQUIRE(DynamicWorld::drive(unit, 8, 0.1, world.sim.terrain()));
         CHECK(unit.position().x > 17);
         CHECK(unit.navigator().is_moving());
     }
@@ -215,7 +224,7 @@ TEST_CASE("Unrelated structures retain accepted routes and air movement ignores 
         unit.set_motion_type("RULEUMT_Air");
         unit.navigator().set_goal({111, 10, 65}, world.sim.pathfinder(), unit.position(), "Air");
         world.structure(65, 65, 8, 24);
-        unit.navigator().update(unit, 80, 1.0, world.sim.terrain());
+        DynamicWorld::drive(unit, 80, 1.0, world.sim.terrain());
         CHECK(unit.position().x > 69);
         CHECK(unit.navigator().is_moving());
     }
@@ -277,13 +286,14 @@ TEST_CASE("Passing a waypoint preserves the corner corridor and straight oversho
     const osc::sim::Vector3 goal{111, 10, 65};
     SECTION("An A star generated corner far off axis must not be skipped") {
         unit.set_position({59.4f, 10, 65});
+        unit.place_now();
         world.structure(65, 65, 8, 24);
         const auto path = world.sim.pathfinder()->find_path(59.4f, 65, 111, 65, "Land");
         REQUIRE(path.waypoints.size() >= 4);
         REQUIRE(path.waypoints[1].x == 59);
         REQUIRE(path.waypoints[1].z == 51);
         unit.navigator().set_goal(goal, world.sim.pathfinder(), unit.position(), "Land");
-        unit.navigator().update(unit, 8, 0, world.sim.terrain());
+        DynamicWorld::drive(unit, 8, 0, world.sim.terrain());
         std::vector<osc::sim::Vector3> ahead;
         unit.navigator().path_ahead(unit.position(), 8, 8, 80, 2, ahead);
         REQUIRE(ahead.size() == 2);
@@ -292,10 +302,12 @@ TEST_CASE("Passing a waypoint preserves the corner corridor and straight oversho
     }
     SECTION("An overshoot onto the outgoing straight still advances") {
         unit.set_position({59.4f, 10, 65});
+        unit.place_now();
         world.structure(65, 65, 8, 24);
         unit.navigator().set_goal(goal, world.sim.pathfinder(), unit.position(), "Land");
         unit.set_position({60.5f, 10, 51});
-        unit.navigator().update(unit, 8, 0, world.sim.terrain());
+        unit.place_now();
+        DynamicWorld::drive(unit, 8, 0, world.sim.terrain());
         std::vector<osc::sim::Vector3> ahead;
         unit.navigator().path_ahead(unit.position(), 8, 8, 80, 2, ahead);
         REQUIRE(ahead.size() == 2);
@@ -304,11 +316,12 @@ TEST_CASE("Passing a waypoint preserves the corner corridor and straight oversho
     }
     SECTION("A sidestep overshot along its straight does not trap its unit") {
         unit.navigator().set_goal(goal, world.sim.pathfinder(), unit.position(), "Land");
-        unit.navigator().update(unit, 8, 0, world.sim.terrain());
+        DynamicWorld::drive(unit, 8, 0, world.sim.terrain());
         unit.navigator().sidestep({41, 10, 65});
         REQUIRE(unit.navigator().sidestepping());
         unit.set_position({42, 10, 65});
-        unit.navigator().update(unit, 8, 0, world.sim.terrain());
+        unit.place_now();
+        DynamicWorld::drive(unit, 8, 0, world.sim.terrain());
         CHECK_FALSE(unit.navigator().sidestepping());
     }
 }
@@ -450,6 +463,7 @@ TEST_CASE("A nearby path corner is retained while the next leg crosses an obstac
     // centre-to-centre segment. Skipping that centre cuts the wall before
     // the gap, and every replan used to repeat the same blocked first step.
     unit.set_position({66.26294f, 10, 73.99763f});
+    unit.place_now();
     unit.set_orientation(osc::sim::euler_to_quat(1.362f, 0, 0));
     osc::sim::UnitCommand move;
     move.type = osc::sim::CommandType::Move;
@@ -473,6 +487,7 @@ TEST_CASE("A completed sidestep replans when its old continuation is behind a wa
     world.structure(96, 75, 48, 2);
     auto& unit = world.mover();
     unit.set_position({66, 10, 71});
+    unit.place_now();
     osc::sim::UnitCommand move;
     move.type = osc::sim::CommandType::Move;
     move.target_pos = {70, 10, 100};
@@ -483,9 +498,10 @@ TEST_CASE("A completed sidestep replans when its old continuation is behind a wa
     const osc::sim::Vector3 aside{65, 10, 73.8f};
     unit.navigator().sidestep(aside);
     unit.set_position(aside);
+    unit.place_now();
     unit.set_orientation(osc::sim::euler_to_quat(-1.5707964f, 0, 0));
     unit.note_drive(0, 0, 8, osc::sim::Unit::MotionTurn::Straight);
-    unit.navigator().update(unit, 8, 0.1, world.sim.terrain());
+    DynamicWorld::drive(unit, 8, 0.1, world.sim.terrain());
     CHECK(unit.navigator().status() == osc::sim::Navigator::Status::WaitingForPath);
     CHECK(unit.position().x == aside.x);
     for (int tick = 0; tick < 300; ++tick) world.sim.tick();
@@ -499,6 +515,7 @@ TEST_CASE("A unit inside its starting structure can leave directly toward its ro
     world.structure(81, 39, 6, 6);
     auto& unit = world.mover();
     unit.set_position({80, 10, 40});
+    unit.place_now();
     unit.set_orientation(osc::sim::euler_to_quat(-1.5707964f, 0, 0));
     REQUIRE(world.sim.pathfinding_grid()->get(40, 20) == osc::map::CellPassability::Obstacle);
     osc::sim::UnitCommand move;

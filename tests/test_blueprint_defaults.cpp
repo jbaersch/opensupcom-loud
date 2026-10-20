@@ -229,9 +229,16 @@ TEST_CASE("A unit blueprint's omitted intel, cap cost and drive read as Moho's d
     )"));
 }
 
-TEST_CASE("An omitted air turn speed reads as Moho's default before a build button is hovered",
-          "[blueprints][air-turn-default]") {
+TEST_CASE(
+    "Omitted air turn speed and fuel time read as native defaults before a build button is hovered",
+    "[blueprints][air-turn-default]") {
     BlueprintWorld w;
+    CHECK(w.check(R"(
+        local bare = {BlueprintId = 'synthetic_no_air_or_physics'}
+        RegisterUnitBlueprint(bare)
+        assert(bare.Air.TurnSpeed == 1, 'missing Air section not defaulted')
+        assert(bare.Physics.FuelUseTime == 0, 'missing Physics section not defaulted')
+    )"));
     CHECK(w.check(R"(
         local flyer = {BlueprintId = 'synthetic_flyer', Air = {MaxAirspeed = 25}}
         RegisterUnitBlueprint(flyer)
@@ -253,11 +260,13 @@ TEST_CASE("An omitted air turn speed reads as Moho's default before a build butt
         assert(button.detail == '20.00' and queued == 1, 'build click lost on rollover')
     )"));
     CHECK(w.check(R"(
-        local stopped = {BlueprintId = 'synthetic_stopped', Air = {TurnSpeed = 0}}
+        local stopped = {BlueprintId = 'synthetic_stopped', Air = {TurnSpeed = 0},
+                         Physics = {FuelUseTime = 0}}
         local own = {BlueprintId = 'synthetic_own', Air = {TurnSpeed = 2.25}}
         RegisterUnitBlueprint(stopped)
         RegisterUnitBlueprint(own)
         assert(stopped.Air.TurnSpeed == 0, 'explicit zero changed')
+        assert(stopped.Physics.FuelUseTime == 0, 'explicit zero fuel duration changed')
         assert(own.Air.TurnSpeed == 2.25, 'explicit turn speed changed')
     )"));
     CHECK(w.check(R"(
@@ -279,6 +288,16 @@ TEST_CASE("An omitted air turn speed reads as Moho's default before a build butt
         RegisterUnitBlueprint(fuelled)
         assert(fuelled.Physics.FuelUseTime == 400, 'explicit fuel duration changed')
         assert(math.floor(fuelled.Physics.FuelUseTime / 60) == 6, 'fuel detail lost duration')
+    )"));
+    w.store.copy_lua_tables(w.state.raw());
+    w.store.expose_to_lua(w.state.raw());
+    CHECK(w.check(R"(
+        assert(__blueprints.synthetic_flyer.Air.TurnSpeed == 1, 'export lost air default')
+        assert(__blueprints.synthetic_unlimited.Physics.FuelUseTime == 0,
+               'export lost fuel default')
+        assert(__blueprints.synthetic_stopped.Air.TurnSpeed == 0, 'export lost explicit zero')
+        assert(__blueprints.synthetic_fuelled.Physics.FuelUseTime == 400,
+               'export lost explicit fuel duration')
     )"));
 }
 

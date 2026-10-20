@@ -79,6 +79,7 @@ add_executable(osc_tests
     test_hover_aim_timing.cpp
     test_unit_blocking.cpp
     test_hull_facing.cpp
+    test_tick_phases.cpp
     test_water_fire.cpp
     test_reclaim.cpp
     test_build_assist.cpp
@@ -152,6 +153,7 @@ add_executable(osc_tests
     test_camera_basis.cpp
     test_camera_moves.cpp
     test_camera_ortho.cpp
+    test_scene_views.cpp
     test_window_mode.cpp
     test_console_vars.cpp
     test_team_color_lookup.cpp
@@ -220,6 +222,7 @@ add_executable(osc_tests
     test_command_sources.cpp
     test_sim_rand.cpp
     test_video_decoder.cpp
+    test_vulkan_layer.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE

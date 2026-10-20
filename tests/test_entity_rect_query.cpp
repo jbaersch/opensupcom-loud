@@ -87,7 +87,7 @@ TEST_CASE("Entity rectangle queries retain collision bounds and tick-delayed mov
     w.check("assert(GetEntitiesInRect(8,8,12,12)[1] == projectile, 'box reaching cell missed')");
     e.set_position({80, 0, 10});
     w.check("assert(GetEntitiesInRect(8,8,12,12)[1] == projectile, 'moved before AdvanceCoords')");
-    w.sim.entity_registry().advance_collision_cells();
+    w.sim.entity_registry().advance_coords();
     w.check("assert(GetEntitiesInRect(8,8,12,12) == nil); "
             "assert(GetEntitiesInRect(76,8,84,12)[1] == projectile)");
     w.sim.entity_registry().unregister_entity(e.entity_id());

@@ -200,7 +200,7 @@ TEST_CASE("Recorded cheat creation replays on the same tick with the same state"
     }
     REQUIRE(replay.commands.size() == 1);
     REQUIRE(replay.commands[0].callback);
-    CHECK(replay.commands[0].exec_tick == 2);
+    CHECK(replay.commands[0].exec_beat == 2);
     SpawnWorld played;
     played.sim.set_game_setup(replay.setup);
     osc::sim::ReplayPlayback playback(replay);

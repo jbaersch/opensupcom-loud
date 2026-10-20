@@ -1855,7 +1855,7 @@ void test_capture(TestContext& ctx) {
             built:SetHealth(nil, __osc_pgen_hp)
             __osc_enemy_pgen = ChangeUnitArmy(built, 2)
             if not __osc_enemy_pgen or __osc_enemy_pgen:GetArmy() ~= 2 then error('not given') end
-            if not IsDestroyed(built) then error('the given one is still there') end
+            if not built:BeenDestroyed() then error('the given one is still there') end
             if math.abs(__osc_enemy_pgen:GetHealth() - __osc_pgen_hp) > 0.01 then
                 error('health ' .. __osc_enemy_pgen:GetHealth())
             end
@@ -2899,6 +2899,7 @@ void test_fow(TestContext& ctx) {
             end
             local pos = acu:GetPosition()
             local myArmy = acu:GetArmy() -- 1-based
+            local cycle = table.getn(ListArmies()) + 1
 
             -- Create an enemy unit within ACU vision range (~26 units)
             local enemy = CreateUnit('uel0201', 2,
@@ -2919,8 +2920,7 @@ void test_fow(TestContext& ctx) {
             end
             LOG('FOW TEST: far enemy #' .. farEnemy:GetEntityId())
 
-            -- Wait a few ticks for visibility to update
-            WaitTicks(5)
+            WaitTicks(cycle)
 
             -- Test 1: GetBlip for nearby enemy (should exist)
             local blip1 = enemy:GetBlip(myArmy)
@@ -3011,7 +3011,7 @@ void test_fow(TestContext& ctx) {
             -- Test 9: Move enemy far away, GetBlip returns nil
             -- (entity left our vision; no dead-reckoning yet)
             enemy:SetPosition({pos[1] + 500, pos[2], pos[3] + 500}, true)
-            WaitTicks(5)
+            WaitTicks(cycle)
             local blip3 = enemy:GetBlip(myArmy)
             if blip3 then
                 -- With dead-reckoning (M34), blip persists at last known position
@@ -3053,7 +3053,7 @@ void test_fow(TestContext& ctx) {
             local scout = CreateUnit('uel0101', 2, pos[1] - 15, pos[2], pos[3], 0, 0, 0)
             local detectedBy = {}
             scout:AddDetectedByHook(function(unit, army) table.insert(detectedBy, army) end)
-            WaitTicks(3)
+            WaitTicks(cycle)
             local sb = scout:GetBlip(myArmy)
             local sawMe = false
             for _, a in detectedBy do
@@ -3071,7 +3071,7 @@ void test_fow(TestContext& ctx) {
                 sb:AddDestroyHook(function(b) destroyedWith = b end)
             end
             scout:Destroy()
-            WaitTicks(2)
+            WaitTicks(cycle)
             if sb and destroyedWith == sb and sb:BeenDestroyed() then
                 LOG('FOW TEST 12b PASSED: the unit gone, its blip OnDestroy ran its hooks')
             else
@@ -3120,7 +3120,7 @@ void test_los(TestContext& ctx) {
             -- Test 1: Nearby enemy on same elevation should be visible
             local nearEnemy = CreateUnit('uel0201', 2,
                 pos[1] + 20, pos[2], pos[3], 0, 0, 0)
-            WaitTicks(5)
+            WaitTicks(table.getn(ListArmies()) + 1)
             local blip1 = nearEnemy:GetBlip(myArmy)
             if blip1 then
                 LOG('LOS TEST 1 PASSED: same-elevation nearby enemy visible')
@@ -3415,9 +3415,9 @@ void test_jammer(TestContext& ctx) {
             local enemyId = enemy:GetEntityId()
             LOG('JAMMER TEST: enemy unit #' .. enemyId ..
                 ' at dist=20 from ACU')
+            local cycle = table.getn(ListArmies()) + 1
 
-            -- Wait for visibility to paint
-            WaitTicks(5)
+            WaitTicks(cycle)
 
             -- Test 1: GetBlip for nearby enemy visible (blip exists, position matches)
             local blip1 = enemy:GetBlip(myArmy)
@@ -3451,23 +3451,23 @@ void test_jammer(TestContext& ctx) {
             enemy:SetPosition({farX, pos[2], farZ})
             LOG('JAMMER TEST: moved enemy to (' .. farX .. ', ' .. farZ .. ')')
 
-            -- Wait for visibility update
-            WaitTicks(5)
+            WaitTicks(cycle)
 
-            -- Test 3: Dead-reckoning position freeze
+            -- Test 3: Dead-reckoning position freeze. Moho's RefreshBlips keeps a
+            -- blip on its unit until its army's recon tick drops it (ReconBlip::Refresh).
             local blip2 = enemy:GetBlip(myArmy)
             if blip2 then
+                enemy:SetPosition({farX + 50, pos[2], farZ})
+                WaitTicks(cycle)
                 local bp2 = blip2:GetPosition()
                 local rp = enemy:GetPosition()
-                -- Blip position should be the LAST KNOWN position (near ACU),
-                -- NOT the current position (far away)
                 local dx_real = math.abs(bp2[1] - rp[1])
-                local dx_old = math.abs(bp2[1] - (pos[1] + 20))
-                if dx_old < 5 and dx_real > 100 then
-                    LOG('JAMMER TEST 3 PASSED: dead-reckoning position frozen at last known')
+                local dx_left = math.abs(bp2[1] - farX)
+                if dx_left < 5 and dx_real > 40 then
+                    LOG('JAMMER TEST 3 PASSED: dead-reckoning frozen where the recon lost it')
                 else
                     LOG('JAMMER TEST 3 FAILED: blip pos x=' .. bp2[1] ..
-                        ' real x=' .. rp[1] .. ' old x=' .. (pos[1] + 20))
+                        ' real x=' .. rp[1] .. ' lost at x=' .. farX)
                 end
             else
                 LOG('JAMMER TEST 3 FAILED: GetBlip returned nil after move')
@@ -3485,7 +3485,7 @@ void test_jammer(TestContext& ctx) {
 
             -- Test 5: Destroy enemy, check BeenDestroyed on blip
             enemy:Destroy()
-            WaitTicks(3)
+            WaitTicks(cycle)
             -- We need to call GetBlip on a destroyed entity.
             -- The entity Lua table still exists but _c_object is nil.
             -- Since entity is destroyed, we use EntityId from the table.
@@ -3525,7 +3525,7 @@ void test_jammer(TestContext& ctx) {
             if jammerUnit then
                 jammerUnit:InitIntel(2, 'Jammer', 30)
                 jammerUnit:EnableIntel('Jammer')
-                WaitTicks(3)
+                WaitTicks(cycle)
 
                 local jblip = jammerUnit:GetBlip(myArmy)
                 if jblip then
@@ -3577,7 +3577,7 @@ void test_jammer(TestContext& ctx) {
                 acu:EnableIntel('Radar')
                 -- Move stealthy unit far away but within radar range
                 stealthUnit:SetPosition({pos[1] + 100, pos[2], pos[3]})
-                WaitTicks(5)
+                WaitTicks(cycle)
 
                 local sblip = stealthUnit:GetBlip(myArmy)
                 if sblip then
@@ -4950,6 +4950,7 @@ void test_adjacency(TestContext& ctx) {
             "pg1:Destroy()\n");
         if (!r) { fail++; osc::test_status::fail("[FAIL] Test 3 setup: {}", r.error().message); }
         else {
+            ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
                 "local count = rawget(_G, '__not_adj_count') or 0\n"
                 "if count > 0 then\n"
@@ -6480,7 +6481,7 @@ void test_prop(TestContext& ctx) {
         Warp(__osc_cell_units[1], {__osc_cell_home[1] + 60, __osc_cell_home[2], __osc_cell_home[3]})
     )");
     for (int i = 0; i < 2; ++i) ctx.sim.tick();
-    lua_check("Test 10d: one warped away leaves its cell as the tick ends", R"(
+    lua_check("Test 10d: one warped away leaves its cell", R"(
         if __osc_cell_order() ~= '3 2' then error('away: ' .. __osc_cell_order()) end
         Warp(__osc_cell_units[1], __osc_cell_home)
     )");
@@ -7324,9 +7325,6 @@ void test_weapon(TestContext& ctx) {
     lua_check("Test 9: a drive raises Stopped>Cruise>TopSpeed>Stopping>Stopped", R"(
         local seen = table.concat(__osc_motion, ' ')
         local want = 'Stopped>Cruise Cruise>TopSpeed TopSpeed>Stopping Stopping>Stopped'
-        -- With Moho's pathing, first a start and a stop at its own cell's
-        -- centre while the path is searched (drive-test, Test 5).
-        if __osc_moho_pathing then want = 'Stopped>Cruise Cruise>Stopped ' .. want end
         if seen ~= want then error('events: ' .. seen) end
     )");
     lua_check("Test 10: the unit script passes each motion event to its weapons", R"(
@@ -8134,11 +8132,13 @@ void test_impact(TestContext& ctx) {
     const bool lit = lit_there();
     (void)ctx.lua_state.do_string("__osc_marker:Destroy()");
     ctx.sim.tick();
+    const bool lit_until_purged = lit_there();
+    ctx.sim.tick();
     const bool dark_after = !lit_there();
-    check(dark_before && lit && dark_after,
-          fmt::format("Test 5: a VizMarker reveals its area while it lives "
-                      "(before {}, with {}, after {})",
-                      !dark_before, lit, !dark_after));
+    check(dark_before && lit && lit_until_purged && dark_after,
+          fmt::format("Test 5: a VizMarker reveals its area while it lives, to the end of the tick "
+                      "it is destroyed in (before {}, with {}, that tick {}, after {})",
+                      !dark_before, lit, lit_until_purged, !dark_after));
 
     // A projectile's life: air bursts, the water's surface, a lost target.
     lua_check("setup: shells in flight", R"(
@@ -8993,10 +8993,6 @@ void test_drive(TestContext& ctx) {
     lua_check("Test 5: its motion events come in order", R"(
         local got = table.concat(__osc_striker.events, ' ')
         local want = 'Stopped>Cruise Cruise>TopSpeed TopSpeed>Stopping Stopping>Stopped'
-        -- While Moho's path search runs, CAiNavigatorLand::Execute steers
-        -- at GetTargetPos, the unit's own cell's centre: a start and a
-        -- stop before the drive.
-        if __osc_moho_pathing then want = 'Stopped>Cruise Cruise>Stopped ' .. want end
         if got ~= want then error(got) end
     )");
 
@@ -9225,7 +9221,7 @@ void test_steer(TestContext& ctx) {
         __osc_slow = __osc_spawn('uel0105', 'ARMY_2', 0, -40, 0)
         __osc_fast = __osc_spawn('uel0201', 'ARMY_1', 0, -50, 0)
         __osc_move(__osc_slow, 0, -12)
-        __osc_move(__osc_fast, 0, -2)
+        ForkThread(function() WaitTicks(5) __osc_move(__osc_fast, 0, -2) end)
     )"
              : R"(
         __osc_slow = __osc_spawn('uel0105', 'ARMY_2', 0, -40, 0)
@@ -9743,6 +9739,7 @@ void test_missile(TestContext& ctx) {
         }
     };
 
+    run(1);
     lua_check("setup", R"(
         -- A unit starts in its blueprint's InitialAutoMode (the launchers'
         -- is on); this test orders its builds, so auto mode starts off.
@@ -9752,7 +9749,7 @@ void test_missile(TestContext& ctx) {
             return u
         end
         function __osc_at(x, z) return {x, GetTerrainHeight(x, z), z} end
-        for _, army in {'ARMY_1', 'ARMY_3'} do
+        for _, army in {'ARMY_1', 'ARMY_3', 'ARMY_4', 'ARMY_5', 'ARMY_6'} do
             local brain = GetArmyBrain(army)
             brain:GiveStorage('MASS', 100000)
             brain:GiveStorage('ENERGY', 5000000)
@@ -9831,6 +9828,49 @@ void test_missile(TestContext& ctx) {
         end
         IssueGuard(__osc_engineers, __osc_b)
         IssueSiloBuildTactical({__osc_b})
+        __osc_b_calls = {}
+        for _, name in {'OnStartBuild', 'OnStopBuild'} do
+            local e, f, call = __osc_engineers[1], __osc_engineers[1][name], name
+            e[name] = function(self, unit, order)
+                if unit == __osc_b then table.insert(__osc_b_calls, call .. ' ' .. tostring(order)) end
+                if call == 'OnStartBuild' and order == 'Repair' then self:SetUnitState('Repairing', true) end
+                local ok, err = pcall(f, self, unit, order)
+                if not ok then table.insert(__osc_b_calls, call .. ' failed: ' .. tostring(err)) end
+            end
+        end
+        -- E, two missiles, an engineer helping from 6 off: when it is
+        -- done with the first, and when it helps again.
+        __osc_e = __osc_spawn('ueb2108', 'ARMY_4', 600, 210)
+        __osc_e_helper = __osc_spawn('uel0105', 'ARMY_4', 594, 210)
+        IssueGuard({__osc_e_helper}, __osc_e)
+        IssueSiloBuildTactical({__osc_e})
+        IssueSiloBuildTactical({__osc_e})
+        __osc_e_rec = {}
+        ForkThread(function()
+            while not __osc_e_rec.back do
+                if not __osc_e_rec.done then
+                    if __osc_e:GetTacticalSiloAmmoCount() > 0 then __osc_e_rec.done = GetGameTick() end
+                elseif __osc_e_helper:IsUnitState('Repairing') then
+                    __osc_e_rec.back = GetGameTick()
+                end
+                WaitTicks(1)
+            end
+        end)
+        -- F with an ACU helping, G with four engineers. Halfway through, an
+        -- enemy tank 24 from the ACU (guard scan 25, guns 22); G at half health.
+        __osc_f = __osc_spawn('ueb2108', 'ARMY_5', 720, 100)
+        __osc_f_acu = __osc_spawn('uel0001', 'ARMY_5', 712, 100)
+        IssueGuard({__osc_f_acu}, __osc_f)
+        __osc_g = __osc_spawn('ueb2108', 'ARMY_6', 600, 260)
+        __osc_g_engineers = {}
+        for i = 1, 4 do
+            table.insert(__osc_g_engineers, __osc_spawn('uel0105', 'ARMY_6', 594 + 3 * i, 255))
+        end
+        IssueGuard(__osc_g_engineers, __osc_g)
+        for i = 1, 2 do
+            IssueSiloBuildTactical({__osc_f})
+            IssueSiloBuildTactical({__osc_g})
+        end
         __osc_s = __osc_watch(__osc_spawn('ueb2305', 'ARMY_1', 560, 300))
         __osc_s:GiveNukeSiloAmmo(1)
         __osc_zero = __osc_at(560, 600)
@@ -9867,6 +9907,46 @@ void test_missile(TestContext& ctx) {
         local progress = __osc_a:GetWorkProgress()
         if math.abs(progress - 0.5) > 0.01 then error('A is ' .. progress .. ' done') end
     )");
+    lua_check("setup: the enemy tank by F's ACU; G damaged", R"(
+        __osc_foe = __osc_spawn('uel0201', 'ARMY_2', 688, 100)
+        __osc_foe:SetFireState(1)
+        __osc_foe:SetMaxHealth(1000000)
+        __osc_foe:SetHealth(__osc_foe, 1000000)
+        __osc_g:SetHealth(__osc_g, __osc_g:GetMaxHealth() / 2)
+        __osc_f_rec = {from = GetGameTick()}
+        __osc_g_rec = {hp = __osc_g:GetHealth()}
+        ForkThread(function()
+            local f, g, e = __osc_f_rec, __osc_g_rec, __osc_g_engineers[1]
+            while not (f.attack and g.back) do
+                local t = GetGameTick()
+                local q = __osc_f_acu:GetCommandQueue()
+                if not f.done then
+                    if __osc_f:GetTacticalSiloAmmoCount() > 0 then
+                        f.done = t
+                    elseif not __osc_f_acu:IsUnitState('Repairing') or table.getn(q) ~= 1 then
+                        f.left = f.left or t
+                    end
+                elseif not f.attack and __osc_f_acu:IsUnitState('Attacking') then
+                    f.attack = t
+                end
+                local hp = __osc_g:GetHealth()
+                if not g.done then
+                    if __osc_g:GetTacticalSiloAmmoCount() > 0 then
+                        g.done = t
+                    elseif hp ~= g.hp then
+                        g.healed_early = t
+                    end
+                elseif not g.heal and hp > g.hp then
+                    g.heal = t
+                elseif g.heal and not g.full and hp >= __osc_g:GetMaxHealth() then
+                    g.full = t
+                elseif g.full and not g.back and e:GetFocusUnit() == __osc_g then
+                    g.back = t
+                end
+                WaitTicks(1)
+            end
+        end)
+    )");
     lua_check("Test 2b: A's economy data asks for its missile's cost over its build time", R"(
         -- 180 M and 3600 E over 30 s.
         local e = __osc_a:GetEconData()
@@ -9874,6 +9954,17 @@ void test_missile(TestContext& ctx) {
            math.abs(e.massConsumed - 6) > 1e-3 or math.abs(e.energyConsumed - 120) > 1e-3 then
             error(string.format('A asks %g M, %g E and spends %g M, %g E a second',
                                 e.massRequested, e.energyRequested, e.massConsumed, e.energyConsumed))
+        end
+    )");
+    lua_check("Test 4b: an engineer helping B repairs it: B its focus, B's progress its own", R"(
+        local e = __osc_engineers[1]
+        if not e:IsUnitState('Repairing') then error('it is not Repairing') end
+        if e:GetFocusUnit() ~= __osc_b then error('its focus is ' .. tostring(e:GetFocusUnit())) end
+        if math.abs(e:GetWorkProgress() - __osc_b:GetWorkProgress()) > 0.005 then
+            error(string.format('its progress is %.4f, B is %.4f done', e:GetWorkProgress(), __osc_b:GetWorkProgress()))
+        end
+        if table.concat(__osc_b_calls, ', ') ~= 'OnStartBuild Repair' then
+            error('its calls: ' .. table.concat(__osc_b_calls, ', '))
         end
     )");
     {
@@ -9909,8 +10000,8 @@ void test_missile(TestContext& ctx) {
               R"(
         local b = __osc_b.__osc.builds[1]
         if not b or not b.done then error('B never finished') end
-        -- 80 + 4 x 5 build rate: 24 s.
-        if math.abs((b.done - b.start) - 240) > 1 then error('B took ' .. (b.done - b.start) .. ' ticks') end
+        -- 80 + 4 x 5 build rate: 24 s, from when the engineers' arms are on B.
+        if b.done - b.start < 240 or b.done - b.start > 243 then error('B took ' .. (b.done - b.start) .. ' ticks') end
         -- The missile's cost, and the engineers' grants that run ahead of
         -- their work (Moho's ResourceConsumed: a grant is worked the tick
         -- after, and given back to the army if they stop first, which the
@@ -9921,6 +10012,50 @@ void test_missile(TestContext& ctx) {
         end
         for _, e in __osc_engineers do
             if e:GetConsumptionPerSecondEnergy() > 0 then error('an engineer still pays') end
+        end
+    )");
+    lua_check("Test 4c: B's missile done, its engineers stop repairing it", R"(
+        for _, e in __osc_engineers do
+            if e:IsUnitState('Repairing') or e:GetFocusUnit() or e:GetWorkProgress() ~= 0 then
+                error(string.format('an engineer: Repairing %s, focus %s, progress %.4f',
+                                    tostring(e:IsUnitState('Repairing')), tostring(e:GetFocusUnit()),
+                                    e:GetWorkProgress()))
+            end
+        end
+        if table.getn(__osc_b_calls) ~= 2 or string.sub(__osc_b_calls[2], 1, 11) ~= 'OnStopBuild' then
+            error('its calls: ' .. table.concat(__osc_b_calls, ', '))
+        end
+    )");
+    lua_check("Test 4d: E's missile done, its engineer helps again 12 ticks on, its arm on E", R"(
+        local r = __osc_e_rec
+        if not r.done or not r.back then
+            error(string.format('done at %s, back at %s', tostring(r.done), tostring(r.back)))
+        end
+        if r.back - r.done < 12 or r.back - r.done > 17 then
+            error('it helps again ' .. (r.back - r.done) .. ' ticks after the missile')
+        end
+    )");
+    lua_check("Test 4e: an ACU helping F's missile takes on the tank only when the missile is done",
+              R"(
+        local r = __osc_f_rec
+        if r.left then error('it stopped helping at ' .. (r.left - r.from) .. ' ticks') end
+        if not r.done or not r.attack then
+            error(string.format('done at %s, attacking at %s', tostring(r.done), tostring(r.attack)))
+        end
+        if r.attack - r.done > 7 then error('it attacked ' .. (r.attack - r.done) .. ' ticks after the missile') end
+    )");
+    lua_check("Test 4f: damaged G is repaired once its missile is done, then helped again", R"(
+        local r = __osc_g_rec
+        if r.healed_early then error('repaired as its missile was built') end
+        if not (r.done and r.heal and r.full and r.back) then
+            error(string.format('done %s, repaired %s, whole %s, helped %s', tostring(r.done), tostring(r.heal),
+                                tostring(r.full), tostring(r.back)))
+        end
+        if r.heal - r.done < 6 or r.heal - r.done > 11 then
+            error('repaired ' .. (r.heal - r.done) .. ' ticks after its missile')
+        end
+        if r.back - r.full < 6 or r.back - r.full > 11 then
+            error('helped again ' .. (r.back - r.full) .. ' ticks after its repair')
         end
     )");
     lua_check("Test 5: the order fired as the missile was done, and it killed its target", R"(
@@ -10111,6 +10246,35 @@ void test_missile(TestContext& ctx) {
         local last = m.path[table.getn(m.path)]
         local miss = math.sqrt((last[1] - __osc_spot2[1]) ^ 2 + (last[3] - __osc_spot2[3]) ^ 2)
         if miss > 4 then error('it came down ' .. miss .. ' from where it was sent') end
+    )");
+
+    lua_check("setup: H's missile under way, an engineer helping it", R"(
+        __osc_h = __osc_spawn('ueb2108', 'ARMY_3', 700, 330)
+        __osc_helper = __osc_spawn('uel0105', 'ARMY_3', 694, 325)
+        __osc_h_calls = {}
+        for _, name in {'OnStartBuild', 'OnStopBuild'} do
+            local e, f, call = __osc_helper, __osc_helper[name], name
+            e[name] = function(self, unit, order)
+                local of = unit == __osc_h and 'H' or tostring(unit)
+                table.insert(__osc_h_calls, call .. ' ' .. of .. ' ' .. tostring(order))
+                local ok, err = pcall(f, self, unit, order)
+                if not ok then table.insert(__osc_h_calls, call .. ' failed: ' .. tostring(err)) end
+            end
+        end
+        IssueGuard({__osc_helper}, __osc_h)
+        IssueSiloBuildTactical({__osc_h})
+    )");
+    run(10);
+    lua_check("setup: H destroyed while its engineer helps", R"(
+        if not __osc_helper:IsUnitState('Repairing') then error('the engineer is not helping H') end
+        __osc_h:Destroy()
+    )");
+    run(2);
+    lua_check("Test 16b: H gone, its helper's OnStopBuild is given nil and 'Repair'", R"(
+        if table.concat(__osc_h_calls, ', ') ~= 'OnStartBuild H Repair, OnStopBuild nil Repair' then
+            error('its calls: ' .. table.concat(__osc_h_calls, ', '))
+        end
+        if __osc_helper:IsUnitState('Repairing') then error('it is still Repairing') end
     )");
 
     check(osc::test_status::failure_count() - fail == failures_before, "Test 17: no script errors");
@@ -10664,6 +10828,7 @@ void test_charge(TestContext& ctx) {
         for (int i = 0; i < ticks; ++i) ctx.sim.tick();
     };
 
+    run(1);
     lua_check("setup", R"(
         function __osc_spawn(bp, army, x, z)
             return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
@@ -10993,6 +11158,18 @@ void test_range(TestContext& ctx) {
         if __osc_from(__osc_mender, 575.5, 80.5) > 0.1 then error('the mender moved') end
         if __osc_from(__osc_reclaimer, 620.5, 80.5) > 0.1 then error('the reclaimer moved') end
         if __osc_from(__osc_taker, 640.5, 80.5) > 0.1 then error('the taker moved') end
+    )");
+    lua_check(
+        "Test 2b: the mender's focus is the tank, and it pays the tank's cost at its build rate",
+        R"(
+        if __osc_mender:GetFocusUnit() ~= __osc_hurt then
+            error('its focus is ' .. tostring(__osc_mender:GetFocusUnit()))
+        end
+        -- 56 mass and 266 energy over the tank's 280 build time at build rate 5 (retail-probe repair)
+        local m, e = __osc_mender:GetConsumptionPerSecondMass(), __osc_mender:GetConsumptionPerSecondEnergy()
+        if math.abs(m - 1) > 1e-3 or math.abs(e - 4.75) > 1e-3 then
+            error(string.format('it pays %g mass and %g energy a second', m, e))
+        end
     )");
 
     // The repair's target moves off: within twice the reach it goes on.
@@ -12084,11 +12261,13 @@ void test_naval_depth(TestContext& ctx) {
             local n = 0
             for _, r in __osc_shots do
                 if r.target == __osc_target and r.impact then
-                    n = n + 1
                     if r.start < 0 then error('a torpedo started under the water, at ' .. r.start) end
                     if not r.entered then error('a torpedo never entered the water') end
                     if r.low > -0.1 then error('a torpedo stayed at ' .. r.low) end
-                    if r.hit ~= __osc_target then error('a torpedo hit ' .. tostring(r.impact)) end
+                    if r.impact ~= 'ProjectileUnderwater' then
+                        n = n + 1
+                        if r.hit ~= __osc_target then error('a torpedo hit ' .. tostring(r.impact)) end
+                    end
                 end
             end
             if n == 0 then error('no torpedo reached ' .. want) end
@@ -12291,7 +12470,7 @@ void test_transport_slots(TestContext& ctx) {
 
     // A UEF T2 transport (14 small, 6 medium and 3 large attach points) on
     // the flat ground east of the map's centre; 15 T1 tanks (class 1) and 4
-    // T3 bots (class 3) beside it, made first, so they tick before it does.
+    // T3 bots (class 3) beside it, made first, so they come before it in the walk.
     // The transport's script notes each bone it is told of.
     if (!lua(R"(
         local function spawn(bp, x, z)
@@ -12388,8 +12567,8 @@ void test_transport_slots(TestContext& ctx) {
     }
 
     // Unloaded, they are set down where they hung, not on top of each other,
-    // and the slots are free again. In flight, they stay on their bones: the
-    // tanks tick before the transport, and it moves them with it.
+    // and the slots are free again. In flight, they stay on their bones: each
+    // waits for the transport in the walk and follows it.
     lua("IssueTransportUnload({__osc_xport}, {640, GetTerrainHeight(640, 100), 100})");
     {
         const osc::sim::Vector3 from = transport ? transport->position() : osc::sim::Vector3{};
@@ -13737,7 +13916,7 @@ void test_change_army(TestContext& ctx) {
               R"(
         if not IsDestroyed(__osc_old_tank) then error('the old unit is still there') end
         if __osc_new_tank.OldOwnerMark then error('the old script state came along') end
-        if __osc_ticks ~= __osc_ticks_at then error('the old thread still runs') end
+        if __osc_ticks ~= __osc_ticks_at + 1 then error('the old thread ran on') end
         local lost = GetArmyBrain('ARMY_1'):GetArmyStat('Units_Killed', 0).Value
         if lost ~= __osc_lost_before then error('counted as lost: ' .. lost) end
     )");
@@ -13923,7 +14102,7 @@ void test_change_army(TestContext& ctx) {
     ctx.sim.set_share_condition("Defectors");
     ctx.sim.defeat_army(1);
     lua_check("Test 10: a defeated army's units go over to an enemy as new units", R"(
-        if not IsDestroyed(__osc_defector) then error('the defector is still there') end
+        if not __osc_defector:BeenDestroyed() then error('the defector is still there') end
         local found = __osc_test_find_unit('uel0201', 1)
         if not found or VDist3(found:GetPosition(), __osc_defector_pos) > 0.01 then
             error('ARMY_1 has no tank where it stood')
@@ -13977,6 +14156,20 @@ void test_air_turn(TestContext& ctx) {
         IssueMove({__osc_f}, {400, GetTerrainHeight(400, 790), 790})
         __osc_a_id = __osc_a:GetEntityId()
         __osc_f_id = __osc_f:GetEntityId()
+        __osc_a_moved, __osc_a_closed, __osc_a_x, __osc_a_z = -1, -1, 0, 0
+        ForkThread(function()
+            local start = __osc_a:GetPosition()
+            for t = 1, 260 do
+                local p = __osc_a:GetPosition()
+                if __osc_a_moved < 0 and (p[1] ~= start[1] or p[3] ~= start[3]) then
+                    __osc_a_moved = t
+                end
+                if __osc_a_closed < 0 and table.getn(__osc_a:GetCommandQueue()) == 0 then
+                    __osc_a_closed, __osc_a_x, __osc_a_z = t, p[1], p[3]
+                end
+                WaitTicks(1)
+            end
+        end)
     )");
     if (!r) {
         check(false, "probe script: " + r.error().message);
@@ -14025,14 +14218,19 @@ void test_air_turn(TestContext& ctx) {
     const auto off = [](const osc::sim::Vector3& p, float x, float z) {
         return std::hypot(p.x - x, p.z - z);
     };
-    // Retail: 86 ticks into its flight, 0.167 off at (320.36, 720.59), its order done.
-    check(a.closed > 0 && off(a.at_close, 320.5f, 720.5f) <= 0.25f &&
+    // Retail, as its probe's thread saw it: 86 ticks into its flight, 0.167 off at
+    // (320.36, 720.59), its order done.
+    a.closed = static_cast<int>(number("__osc_a_closed"));
+    a.at_close = {static_cast<float>(number("__osc_a_x")), 0.0f,
+                  static_cast<float>(number("__osc_a_z"))};
+    const int a_moved = static_cast<int>(number("__osc_a_moved"));
+    check(a.closed > 0 && a_moved > 0 && off(a.at_close, 320.5f, 720.5f) <= 0.25f &&
               off(a.at_close, 320.36f, 720.59f) < 0.05f &&
-              std::abs(a.closed - a.moved + 1 - 86) <= 1,
+              std::abs(a.closed - a_moved + 1 - 86) <= 1,
           fmt::format("the interceptor passes its goal {:.3f} off at ({:.2f}, {:.2f}), {} ticks "
                       "into its flight, and its order is done there",
                       off(a.at_close, 320.5f, 720.5f), a.at_close.x, a.at_close.z,
-                      a.closed - a.moved + 1));
+                      a.closed - a_moved + 1));
     // Retail: it lands 96 ticks later at (329.32, 721.20).
     const auto a_end = a.unit->position();
     check(a.landed > 0 && off(a_end, 329.32f, 721.2f) < 0.1f &&
@@ -14289,10 +14487,12 @@ void test_air_staging(TestContext& ctx) {
 
     // Docked: fuel rises by FuelRechargeRate / FuelUseTime / 10 times the
     // pad's multiplier a tick (5 / 300 / 10 x 50), and it heard
-    // OnStartRefueling once. Its repair is asked for at once, and heals from
-    // the next tick: 500 / 10 a tick.
+    // OnStartRefueling once. Its repair is asked for in the tick it docks
+    // (Moho's ProcessFuelLevels runs after the refuel task docks it), and heals
+    // from the next tick: 500 / 10 a tick.
     const float f0 = a->fuel_ratio();
     const float h0 = a->health();
+    const double asked_docking = a->economy().dock_repair_energy;
     step();
     const float f1 = a->fuel_ratio();
     const float h1 = a->health();
@@ -14310,10 +14510,12 @@ void test_air_staging(TestContext& ctx) {
           fmt::format("docked, the tank rises {:.5f} a tick", f1 - f0));
     check(number("__osc_started") == 1,
           fmt::format("OnStartRefueling heard {} time(s)", number("__osc_started")));
-    check(h1 == h0 && std::abs(h2 - std::min(a->max_health(), h1 + 50.0f)) < 0.01f &&
-              ask_e == 50.0 && ask_m == 5.0,
-          fmt::format("repair: asks 50E 5M a second ({}, {}), heals from the next tick ({} {} {})",
-                      ask_e, ask_m, h0, h1, h2));
+    check(asked_docking == 50.0 && std::abs(h1 - std::min(a->max_health(), h0 + 50.0f)) < 0.01f &&
+              std::abs(h2 - std::min(a->max_health(), h1 + 50.0f)) < 0.01f && ask_e == 50.0 &&
+              ask_m == 5.0,
+          fmt::format("repair: asks 50E 5M a second ({}, {}) from the tick it docks ({}), heals "
+                      "from the next tick ({} {} {})",
+                      ask_e, ask_m, asked_docking, h0, h1, h2));
 
     // Full and repaired, it is let go at the pad's next look (every 9 ticks
     // from the tick after it docked), where it sat, and climbs away.
@@ -15735,18 +15937,29 @@ void test_spatial(TestContext& ctx) {
         if (ok3) { pass++; spdlog::info("[PASS] Test 3: collect_in_radius excludes distant entity"); }
         else { fail++; osc::test_status::fail("[FAIL] Test 3: collect_in_radius included distant entity"); }
 
-        // Test 4: Moving entity updates grid automatically
+        // Test 4: A move updates the grid as it is committed
         auto* e = reg.find(uid);
         e->set_position({50.0f, 0.0f, 50.0f});
+        auto pending_move = reg.collect_in_radius(50.0f, 50.0f, 10.0f);
+        bool ok4p = std::find(pending_move.begin(), pending_move.end(), uid) == pending_move.end();
+        reg.advance_coords();
         auto after_move = reg.collect_in_radius(50.0f, 50.0f, 10.0f);
         bool ok4a = std::find(after_move.begin(), after_move.end(), uid) != after_move.end();
         auto old_pos = reg.collect_in_radius(256.0f, 256.0f, 10.0f);
         bool ok4b = std::find(old_pos.begin(), old_pos.end(), uid) == old_pos.end();
-        if (ok4a && ok4b) { pass++; spdlog::info("[PASS] Test 4: set_position auto-updates grid"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 4: grid not updated after set_position (found_new={}, gone_old={})", ok4a, ok4b); }
+        if (ok4p && ok4a && ok4b) {
+            pass++;
+            spdlog::info("[PASS] Test 4: a committed move updates the grid");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 4: grid not updated as a move is committed "
+                                   "(not_before={}, found_new={}, gone_old={})",
+                                   ok4p, ok4a, ok4b);
+        }
 
         // Test 5: collect_in_rect returns correct results
         e->set_position({100.0f, 0.0f, 100.0f});
+        reg.advance_coords();
         auto rect = reg.collect_in_rect(90.0f, 90.0f, 110.0f, 110.0f);
         bool ok5 = std::find(rect.begin(), rect.end(), uid) != rect.end();
         if (ok5) { pass++; spdlog::info("[PASS] Test 5: collect_in_rect finds entity"); }
@@ -16046,6 +16259,7 @@ void test_unitsound(TestContext& ctx) {
         }
     }
     lua("e:Destroy()");
+    ctx.sim.tick();
     sync();
     for (int i = 0; i < 40; ++i) ctx.sim.tick(); // releases and fades run out
     if (!sound->is_playing(move)) {

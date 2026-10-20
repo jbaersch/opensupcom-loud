@@ -89,11 +89,13 @@ TEST_CASE("A top-priority target survives a nearer or better-aligned equal-prior
     SECTION("The candidate is nearer") {}
     SECTION("The candidate has equal distance and a lower entity id") {
         candidate.set_position({84, 10, 64});
+        candidate.place_now();
     }
     SECTION("The candidate is in arc while the retained slaved target is outside it") {
         s.weapon->heading_arc_range = 30;
         s.weapon->slaved_to_body = true;
         current.set_position({64, 10, 44});
+        current.place_now();
         REQUIRE_FALSE(s.weapon->in_heading_arc(*s.owner, current.position()));
         REQUIRE(s.weapon->in_heading_arc(*s.owner, candidate.position()));
     }
@@ -126,6 +128,7 @@ TEST_CASE("A retained top-priority target is validated before its scheduled rech
     }
     SECTION("Target beyond tracking range") {
         current.set_position({64, 10, 120});
+        current.place_now();
     }
     SECTION("Target cloaked without omni") {
         current.set_cloaked(true);

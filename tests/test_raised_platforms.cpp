@@ -188,8 +188,10 @@ TEST_CASE("Ground stance sees platforms added and removed among ordinary units",
     f->set_raised_platforms(decks());
     CHECK(ground() == Approx(kGround + 0.5f));
     f->set_position({100, kGround, 100});
+    f->place_now();
     CHECK(ground() == kGround);
     f->set_position({64, kGround, 64});
+    f->place_now();
     CHECK(ground() == Approx(kGround + 0.5f));
     sim.entity_registry().unregister_entity(f->entity_id());
     CHECK(ground() == kGround);

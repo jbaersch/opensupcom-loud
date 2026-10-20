@@ -138,7 +138,7 @@ TEST_CASE("Restored spatial queries rebuild their acceleration from saved positi
     populate(restored.entity_registry());
     original.entity_registry().find(1)->set_position({33, 0, 31});
     original.entity_registry().find(2)->set_position({15, 0, 17});
-    original.entity_registry().advance_collision_cells();
+    original.entity_registry().advance_coords();
     // LuaState leaves its initialization value on the stack; snapshots
     // require the main thread at rest, as at the simulation tick boundary.
     lua_settop(lua_a.raw(), 0);
@@ -217,6 +217,8 @@ TEST_CASE("Radius grids retain every entity kind accepted by rounded float dista
                     position.x += 64;
                     entity.set_position(position);
                 });
+            flat.advance_coords();
+            indexed.advance_coords();
             check(boundary.center + 64);
         }
     }

@@ -86,12 +86,12 @@ i32 find_muzzle_bone(const Unit& owner, const std::string& name) {
 }
 
 Vector3 owner_facing(const Unit& owner) {
-    return quat_rotate(owner.orientation(), Vector3{0.0f, 0.0f, 1.0f});
+    return quat_rotate(owner.pending_orientation(), Vector3{0.0f, 0.0f, 1.0f});
 }
 
 bool has_omni_detection(const Unit& owner, const Entity& target, const SimState* sim) {
     if (!sim || owner.army() < 0) return false;
-    return (sim->recon_of(target, static_cast<u32>(owner.army())) & SimState::kReconOmni) != 0;
+    return sim->recon_flags(target.entity_id(), static_cast<u32>(owner.army())).omni;
 }
 
 bool is_weapon_targetable(const Unit& owner, const Entity& target, const SimState* sim) {
@@ -176,11 +176,16 @@ const Weapon* primary_weapon(const Unit& owner) {
     return nullptr;
 }
 
-/// The unit an attack order at the head of the queue names, or 0.
+/// The unit an attack order at the head of the queue has handed its attacker (Moho's desired
+/// target), or 0.
 u32 attack_order_target(const Unit& owner) {
     const auto& queue = owner.command_queue();
     if (queue.empty() || queue.front().type != CommandType::Attack) return 0;
-    return queue.front().target_id;
+    const UnitCommand& order = queue.front();
+    if (!order.engaged) {
+        return 0;
+    }
+    return order.target_id;
 }
 
 } // namespace
@@ -209,7 +214,7 @@ bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry,
     // not by its unit's layer (Moho's UnitWeapon fire check), so a walker
     // standing on the seabed fires while its guns are above the water.
     if (above_water_fire_only) {
-        Vector3 muzzle = owner.position();
+        Vector3 muzzle = owner.pending_position();
         if (const i32 bone = find_muzzle_bone(owner, muzzle_bone_name); bone >= 0)
             muzzle = owner.bone_world_position(bone);
         if (muzzle.y <= water_surface(sim)) return false;
@@ -289,51 +294,87 @@ bool Weapon::call_script(lua_State* L, const char* method, const char* arg) cons
     return result;
 }
 
-void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim,
-                    f32 aim_dt) {
-    if (fire_clock > 0) --fire_clock;
-
-    if (!enabled || fire_on_death) {
-        update_aim(owner, registry, L, aim_dt);
+void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim) {
+    fire_step(owner, registry, L, sim);
+    if (owner.destroyed() || owner.is_dying()) {
         return;
     }
-    // A source target painter deals no damage, but steers a shared turret
-    // and receives the normal targeting and firing callbacks. Preserve the
-    // inert non-scripted fixture/fallback path and manual launch behavior.
-    if (max_range <= 0 || (damage <= 0 && !manual_fire && !fires_through_script())) {
-        update_aim(owner, registry, L, aim_dt);
+    acquire_step(owner, registry, L, sim);
+}
+
+void Weapon::fire_step(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim) {
+    if (fire_clock > 0) {
+        --fire_clock;
+    }
+    if (!enabled || fire_on_death || manual_fire || max_range <= 0 ||
+        (damage <= 0 && !fires_through_script()) || owner.fire_state() == 1) {
         return;
     }
+    if (L && fires_through_script()) {
+        fire_scripted(owner, registry, L, sim);
+        return;
+    }
+    fire_direct(owner, registry, L, sim);
+}
 
+void Weapon::acquire_step(Unit& owner, EntityRegistry& registry, lua_State* L,
+                          const SimState* sim) {
+    if (!enabled || fire_on_death || manual_fire || max_range <= 0 ||
+        (damage <= 0 && !fires_through_script()) || owner.fire_state() == 1) {
+        return;
+    }
     const TargetMark previous = target_mark();
-    if (manual_fire) {
-        // It fires only at what its unit's launch order names, whatever the
-        // fire state.
-        take_order_target(owner, registry);
-    } else {
-        // HoldFire (1) = don't auto-target or fire at all
-        if (owner.fire_state() == 1) {
-            update_aim(owner, registry, L, aim_dt);
+    update_targeting(owner, registry, sim);
+    if (L && fires_through_script()) {
+        report_target_change(owner, L, previous);
+        if (owner.destroyed() || owner.is_dying()) {
             return;
         }
-        update_targeting(owner, registry, sim);
     }
-    if (aim_spot_target != target_entity_id) pick_aim_spot(registry, sim);
-    update_aim(owner, registry, L, aim_dt);
-    if (owner.destroyed() || owner.is_dying()) return; // a tracking callback may kill it
+    if (aim_spot_target != target_entity_id) {
+        pick_aim_spot(registry, sim);
+    }
+    update_aim(owner, registry, L);
+}
 
+void Weapon::fire_at_order(Unit& owner, EntityRegistry& registry, lua_State* L,
+                           const SimState* sim) {
+    if (!enabled || fire_on_death || !manual_fire || max_range <= 0) {
+        return;
+    }
+    const TargetMark previous = target_mark();
+    take_order_target(owner, registry);
+    if (aim_spot_target != target_entity_id) {
+        pick_aim_spot(registry, sim);
+    }
+    update_aim(owner, registry, L);
+    if (owner.destroyed() || owner.is_dying()) {
+        return;
+    }
     if (L && fires_through_script()) {
-        update_scripted(owner, registry, L, previous, sim);
+        if (report_target_change(owner, L, previous)) {
+            fire_scripted(owner, registry, L, sim);
+        }
         return;
     }
+    fire_direct(owner, registry, L, sim);
+}
 
-    if (!has_target() || fire_clock > 0 || ground_fire_barred()) return;
-    const std::optional<Vector3> at = target_point(registry);
-    if (!at || !in_firing_range(owner, *at) || !in_heading_arc(owner, *at)) return;
-    if (counted_projectile && owner.silo_ammo(nuke_weapon) <= 0) return;
-    if (const AimManipulator* aim = fire_control(owner);
-        aim && !(aim->enabled() && aim->on_target()))
+void Weapon::fire_direct(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim) {
+    if (!has_target() || fire_clock > 0 || ground_fire_barred()) {
         return;
+    }
+    const std::optional<Vector3> at = target_point(registry);
+    if (!at || !in_firing_range(owner, *at) || !in_heading_arc(owner, *at)) {
+        return;
+    }
+    if (counted_projectile && owner.silo_ammo(nuke_weapon) <= 0) {
+        return;
+    }
+    if (const AimManipulator* aim = fire_control(owner);
+        aim && !(aim->enabled() && aim->on_target())) {
+        return;
+    }
     if (try_fire(owner, registry, L, sim)) {
         fire_clock = fire_period();
         ++shots_at_target;
@@ -376,35 +417,44 @@ void Weapon::drop_target(lua_State* L) {
     if (had && fires_through_script()) call_script(L, "OnLostTarget");
 }
 
-void Weapon::update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L,
-                             const TargetMark& previous, const SimState* sim) {
-    // Each callback may kill the unit or disable the weapon.
+bool Weapon::report_target_change(const Unit& owner, lua_State* L, const TargetMark& previous) {
     const auto still_firing = [&] {
         return !owner.destroyed() && !owner.is_dying() && fires_through_script();
     };
-    if (!(target_mark() == previous)) {
-        if (previous.entity != 0 || previous.ground) {
-            // A manual weapon whose order went: its script must not fire on
-            // (Moho's OnHaltFire, "so we won't fire if the target reticle is
-            // moved"); an unpacking launcher packs up on losing its target.
-            if (manual_fire) {
-                call_script(L, "OnHaltFire");
-                if (!still_firing()) return;
+    if (target_mark() == previous) {
+        return true;
+    }
+    if (previous.entity != 0 || previous.ground) {
+        // Moho's OnHaltFire: a manual weapon whose order went must not fire on.
+        if (manual_fire) {
+            call_script(L, "OnHaltFire");
+            if (!still_firing()) {
+                return false;
             }
-            call_script(L, "OnLostTarget");
-            if (!still_firing()) return;
         }
-        if (has_target()) {
-            call_script(L, "OnGotTarget");
-            if (!still_firing()) return;
+        call_script(L, "OnLostTarget");
+        if (!still_firing()) {
+            return false;
         }
     }
+    if (has_target()) {
+        call_script(L, "OnGotTarget");
+        if (!still_firing()) {
+            return false;
+        }
+    }
+    return true;
+}
 
-    // The fire clock: when it is ready and the weapon can fire, the script
-    // gets OnFire (its state machine decides what that means) and the clock
-    // restarts.
-    if (fire_clock > 0 || ground_fire_barred() || !can_fire(owner, registry, sim)) return;
-    if (!call_script(L, "CanWeaponFire") || !still_firing()) return;
+void Weapon::fire_scripted(Unit& owner, EntityRegistry& registry, lua_State* L,
+                           const SimState* sim) {
+    if (fire_clock > 0 || ground_fire_barred() || !can_fire(owner, registry, sim)) {
+        return;
+    }
+    if (!call_script(L, "CanWeaponFire") || owner.destroyed() || owner.is_dying() ||
+        !fires_through_script()) {
+        return;
+    }
     call_script(L, "OnFire");
     fire_clock = fire_period();
     ++shots_at_target;
@@ -536,9 +586,10 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     // The order gone, or the point out of this weapon's reach: it looks for
     // targets again.
     if (ground_from_order) set_target_entity(0);
-    // An aircraft's weapons take its ordered target at any range: Moho's
-    // CAcquireTargetTask gives a flier the attacker's desired target out of
-    // reach too, so it is kept through the runs' loops.
+    // An aircraft's weapons take its ordered target once the attack engages,
+    // then at any range: Moho's CAcquireTargetTask gives a flier the
+    // attacker's desired target out of reach too, so it is kept through the
+    // runs' loops.
     const u32 ordered = attack_order_target(owner);
     // A target this weapon can no longer shoot is dropped at once.
     if (target_entity_id != 0) {
@@ -732,7 +783,7 @@ const AimManipulator* Weapon::fire_control(const Unit& owner) const {
     return first;
 }
 
-void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L, f32 dt) {
+void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L) {
     // Collect first: a tracking callback may add manipulators (the vector
     // may grow) or destroy them (they stay allocated until the unit's
     // manipulators tick).
@@ -751,7 +802,8 @@ void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L, f32
         const bool was_tracking = aim->has_target();
         if (aiming) {
             const i32 bone = find_muzzle_bone(owner, muzzle_bone_name);
-            const Vector3 from = bone >= 0 ? owner.bone_world_position(bone) : owner.position();
+            const Vector3 from =
+                bone >= 0 ? owner.bone_world_position(bone) : owner.pending_position();
             const Vector3 at =
                 target ? aim_point(*target, owner, from,
                                    bone >= 0 ? owner.bone_world_forward(bone) : owner_facing(owner))
@@ -772,11 +824,6 @@ void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L, f32
         } else {
             aim->clear_target();
         }
-        // Moho's MotionTick moves the hull before updating manipulators.
-        // Solve against this body's current attitude and this target once;
-        // a second zero-time solve would invalidate an exact solution as
-        // its own muzzle moved. Do not reuse last tick's OnTarget instead.
-        owner.tick_weapon_aim(*aim, dt, L);
         if (!scripted || was_tracking == aiming) continue;
         const std::string label = aim->label(); // the callback may free the aim
         call_script(L, aiming ? "OnStartTracking" : "OnStopTracking", label.c_str());
@@ -805,7 +852,7 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry, lua_State* L, const
 
     // Resolve muzzle bone position for projectile spawn
     // From the muzzle as the turret is posed now.
-    Vector3 spawn_pos = owner.position();
+    Vector3 spawn_pos = owner.pending_position();
     std::optional<Vector3> muzzle_dir;
     if (const i32 bone = find_muzzle_bone(owner, muzzle_bone_name); bone >= 0) {
         spawn_pos = owner.bone_world_position(bone);
@@ -813,9 +860,12 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry, lua_State* L, const
     }
 
     const std::string& layer = owner.layer();
-    const Projectile* fired = launch(owner, spawn_pos, target, registry, L,
-                                     layer == "Sub" || layer == "Seabed", muzzle_dir);
-    if (!fired) return false;
+    Projectile* fired = launch(owner, spawn_pos, target, registry, L,
+                               layer == "Sub" || layer == "Seabed", muzzle_dir);
+    if (!fired) {
+        return false;
+    }
+    fired->engine_damage = true;
     // With no script to take it, the engine spends the missile.
     if (counted_projectile) owner.remove_silo_ammo(nuke_weapon, 1);
     spdlog::debug("Weapon '{}' fired projectile #{} at entity #{}", label, fired->entity_id(),
@@ -1013,7 +1063,7 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
 
     const Projectile::BlueprintPhysics physics =
         proj->apply_blueprint_physics(L, &registry.sim_random());
-    proj->lifetime = physics.lifetime;
+    proj->set_lifetime(physics.lifetime, registry.tick());
     if (physics.realistic_ordinance) {
         // A bomb (RealisticOrdinance) leaves with its launcher's speed,
         // aimed flat from the launcher at its target -- or where a moving
@@ -1036,9 +1086,12 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     }
     // The weapon's own lifetime for its shots wins (an anti-torpedo's
     // blueprint says half a second, its weapon four).
-    if (projectile_lifetime_multiplier > 0 && muzzle_velocity > 0)
-        proj->lifetime = projectile_lifetime_multiplier * max_range / muzzle_velocity;
-    else if (projectile_lifetime > 0) proj->lifetime = projectile_lifetime;
+    if (projectile_lifetime_multiplier > 0 && muzzle_velocity > 0) {
+        proj->set_lifetime(projectile_lifetime_multiplier * max_range / muzzle_velocity,
+                           registry.tick());
+    } else if (projectile_lifetime > 0) {
+        proj->set_lifetime(projectile_lifetime, registry.tick());
+    }
     if (counted_projectile) {
         // Facing along its muzzle, even at rest: it accelerates that way.
         const f32 across = std::sqrt(facing.x * facing.x + facing.z * facing.z);

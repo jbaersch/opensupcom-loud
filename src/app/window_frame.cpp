@@ -35,10 +35,9 @@ bool App::Window::frame() {
     note_game_over_if_ended(sim_state.get(), game_state_mgr, ui_lua_state.raw());
 
     // Fixed-timestep sim ticking (scaled by sim_speed)
-    const osc::u32 beat_tick0 = sim_state ? sim_state->tick_count() : 0;
     advance_sim(session_dt);
 
-    run_beats(session_dt, beat_tick0);
+    run_beats();
     finish_world_ui_after_post_load();
 
     // Process SimCallbacks from UI (M138a)
@@ -179,14 +178,18 @@ void App::Window::count_fps(double dt) {
 }
 
 void App::Window::advance_sim(double dt) {
-    if (sim_state && (game_state_mgr.paused() || sim_state->network_paused())) {
+    if (sim_state && game_state_mgr.paused()) {
         world_interp.one_tick_next = true;
     }
     if (fixed_step()) {
         world_interp.one_tick_next = false;
     }
     if (!game_state_mgr.paused() && !game_state_mgr.sim_stopped() && sim_state) {
-        world_interp.clock.advance(dt * game_state_mgr.speed());
+        const bool held = sim_state->paused() || sim_state->game_over();
+        const double sim_dt = held ? dt : dt * game_state_mgr.speed();
+        if (!held) {
+            world_interp.clock.advance(sim_dt);
+        }
         if (catch_up) {
             // A loaded game catches up to its saved tick as fast as
             // the sim runs, a frame's budget of ticks at a time: the
@@ -224,15 +227,14 @@ void App::Window::advance_sim(double dt) {
             if (game_state_mgr.sim_rate() != session->speed())
                 game_state_mgr.set_sim_rate(session->speed());
             const int rounds = osc::session_ticks(sim_accumulator, world_interp.one_tick_next,
-                                                  dt * game_state_mgr.speed(),
-                                                  osc::sim::SimState::SECONDS_PER_TICK, 4);
+                                                  sim_dt, osc::sim::SimState::SECONDS_PER_TICK, 4);
             for (int r = 0; r < rounds; ++r) {
                 session->send_frame();
                 session->receive_and_advance();
                 // A timed-out peer leaves so the match resolves instead
                 // of stalling in "waiting for players": the survivors
-                // agree on its last frame, and its command source ends on
-                // the same tick on every one of them (a command, so
+                // agree on its last frame, and its command source ends in
+                // the same beat on every one of them (a command, so
                 // replays keep it) -- an army it leaves with no player is
                 // abandoned to its brain, which retail's defeats.
                 for (osc::u32 src : session->take_dropped()) {
@@ -241,24 +243,22 @@ void App::Window::advance_sim(double dt) {
                 }
             }
         } else {
-            // At most 8 ticks per frame. A live solo session also yields
+            // At most 8 beats per frame. A live solo session also yields
             // after a soft 16 ms of completed simulation work, so expensive
             // catch-up ticks cannot starve input and rendering in a burst.
             // A single slow tick remains indivisible. Like the count cap,
             // overload drops excess wall time, not native ticks/commands.
             const int ticks = osc::session_ticks(sim_accumulator, world_interp.one_tick_next,
-                                                 dt * game_state_mgr.speed(),
-                                                 osc::sim::SimState::SECONDS_PER_TICK, 8);
+                                                 sim_dt, osc::sim::SimState::SECONDS_PER_TICK, 8);
             const auto advance_tick = [&] {
-                // A game or a replay plays to its end, then holds there.
-                if (sim_state->game_over() ||
-                    (active_playback && active_playback->finished(*sim_state)))
-                    return false;
+                // Beat processing includes paused/game-over command and UI
+                // flow; only a finished playback stops producing beats.
+                if (active_playback && active_playback->finished(*sim_state)) return false;
                 sim_state->tick();
                 if (active_playback) {
                     const bool diverged = active_playback->diverged_at() != 0;
                     if (!active_playback->check(*sim_state) && !diverged) {
-                        spdlog::warn("Replay: diverged from the recording at tick {}",
+                        spdlog::warn("Replay: diverged from the recording at beat {}",
                                      active_playback->diverged_at());
                     }
                 }
@@ -288,22 +288,12 @@ void App::Window::finish_world_ui_after_post_load() {
                     sim_lua_state.get(), sim_state.get());
 }
 
-void App::Window::run_beats(double dt, u32 beat_tick0) {
-    // Moho's sim beat reaches the user side once per tick, and
-    // keeps running at the tick rate while paused or the game is over.
+void App::Window::run_beats() {
+    // CWldSession::DoBeat: each of the sim's beats reaches the user side with its own Sync.
     if (sim_state && sim_lua_state) {
-        osc::u32 beats = sim_state->tick_count() - beat_tick0;
-        if (game_state_mgr.paused() || sim_state->game_over()) {
-            paused_beat_accumulator += dt;
-            while (paused_beat_accumulator >= osc::sim::SimState::SECONDS_PER_TICK) {
-                paused_beat_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
-                ++beats;
-            }
-        } else {
-            paused_beat_accumulator = 0.0;
-        }
-        for (osc::u32 b = 0; b < beats; ++b)
+        while (osc::lua::sync_pending(sim_lua_state->raw())) {
             world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
+        }
     }
 }
 
@@ -397,7 +387,9 @@ void App::Window::update_ui(double dt) {
     {
         osc::f64 mx = 0, my = 0;
         renderer.ui_mouse_position(mx, my);
-        renderer.camera().set_mouse_enabled(!mouse_over_ui(ui_lua_state.raw(), mx, my));
+        const bool over_ui = mouse_over_ui(ui_lua_state.raw(), mx, my);
+        renderer.set_mouse_over_ui(over_ui);
+        renderer.camera().set_mouse_enabled(!over_ui);
     }
     if (sim_state && sim_state->has_playable_rect()) {
         renderer.camera().set_playable_rect(sim_state->playable_x0(), sim_state->playable_z0(),
@@ -545,10 +537,10 @@ void App::Window::update_title(double dt) {
         title_update_timer = 0.0;
         char title[256];
         if (sim_state) {
-            const char* status_str = game_state_mgr.game_over() ? "GAME OVER "
-                                     : sim_state->resuming()    ? "LOADING "
-                                     : game_state_mgr.paused()  ? "PAUSED "
-                                                                : "";
+            const char* status_str = game_state_mgr.game_over()                       ? "GAME OVER "
+                                     : sim_state->resuming()                          ? "LOADING "
+                                     : game_state_mgr.paused() || sim_state->paused() ? "PAUSED "
+                                                                                      : "";
             std::snprintf(title, sizeof(title),
                           "OpenSupCom | %s%.1fx | T:%u (%.1fs) | %zu entities | %zu sel | %.0f FPS",
                           status_str, game_state_mgr.speed(), sim_state->tick_count(),

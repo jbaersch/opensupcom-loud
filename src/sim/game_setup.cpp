@@ -124,7 +124,9 @@ bool read_game_setup(ByteReader& r, GameSetup& s, u32 version) {
         slot.handicap = read_int(r);
         slot.ai_personality = r.str();
         if (version >= 9) slot.slot = read_int(r); // before: none
-        if (version >= 17 && r.u8v() != 0) slot.player_options = r.str();
+        // Upstream 17 introduced beat-based replays without player tables.
+        // The combined fork layout starts these fields at version 18.
+        if (version >= 18 && r.u8v() != 0) slot.player_options = r.str();
         s.slots.push_back(std::move(slot));
     }
 

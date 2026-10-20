@@ -391,7 +391,7 @@ void apply_script_projectile_physics(lua_State* L, sim::Projectile& p) {
     const sim::Projectile::BlueprintPhysics physics =
         p.apply_blueprint_physics(L, sim ? &sim->entity_registry().sim_random() : nullptr);
     if (physics.use_gravity.value_or(true)) p.ballistic_accel = -sim::Projectile::GRAVITY;
-    p.lifetime = physics.lifetime;
+    p.set_lifetime(physics.lifetime, sim ? sim->tick_count() : 0);
 }
 
 std::string lowercase_arg(lua_State* L, int idx) {
@@ -493,6 +493,28 @@ static int thrust_SetThrustingParam(lua_State* L) {
                                                                  {v[1], v[3], v[5]}, v[6], v[7]);
     return 0;
 }
+
+static int slaver_SetMaxRate(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 2) {
+        return luaL_error(L, "%s\n  expected %d args, but got %d",
+                          "SlaveManipulator:SetMaxRate(self, degrees_per_second)", 2, n);
+    }
+    auto* m = check_manip_base(L);
+    if (!m) {
+        return 0;
+    }
+    static_cast<sim::SlaverManipulator*>(m)->set_max_rate(static_cast<f32>(luaL_checknumber(L, 2)));
+    lua_settop(L, 1);
+    return 1;
+}
+
+// clang-format off
+static const MethodEntry slave_manipulator_methods[] = {
+    {"SetMaxRate", slaver_SetMaxRate},
+    {nullptr, nullptr},
+};
+// clang-format on
 
 // Minimal entries for other classes
 // clang-format off
@@ -1721,7 +1743,7 @@ static const MohoClassDef moho_classes[] = {
     {"BuilderArmManipulator",   builder_arm_methods,            "manipulator_methods"},
     {"RotateManipulator",       rotate_manipulator_methods,     "manipulator_methods"},
     {"SlideManipulator",        slide_manipulator_methods,      "manipulator_methods"},
-    {"SlaveManipulator",        empty_methods,                  "manipulator_methods"},
+    {"SlaveManipulator",        slave_manipulator_methods,      "manipulator_methods"},
     {"ThrustManipulator",       thrust_manipulator_methods,     "manipulator_methods"},
     {"BoneEntityManipulator",   empty_methods,                  "manipulator_methods"},
     {"StorageManipulator",      empty_methods,                  "manipulator_methods"},
@@ -2311,8 +2333,8 @@ static int l_GetIsAutoSurfaceMode(lua_State* L) {
 }
 
 // The orders panel's unit settings. Each is a request the sim applies
-// inside a tick, like an order: in multiplayer every peer applies it on the
-// same tick. A toggle is resolved here, from the state the UI shows, to the
+// in a beat, like an order: in multiplayer every peer applies it in the
+// same beat. A toggle is resolved here, from the state the UI shows, to the
 // value it sets, so every unit in a mixed selection ends up alike.
 
 /// Queue `setting` = `value` (plus the script bit, if any) for the units in
@@ -2931,7 +2953,7 @@ static int l_GetUnitCommandDataOfUnit(lua_State* L) {
 
 // The UI's orders. Each is the local player's order, routed as human input
 // like the input handler's clicks: a command on the sim's input that it
-// applies inside its next tick, and that a networked match broadcasts.
+// applies in its next beat, and that a networked match broadcasts.
 
 /// Route `cmd` for `ids` as the local player's order.
 void issue_player_order(lua_State* L, const std::vector<u32>& ids, const sim::UnitCommand& cmd,
@@ -3312,7 +3334,7 @@ static int l_ClearCurrentFactoryForQueueDisplay(lua_State* L) {
 }
 
 /// A change to the count at `index` of the queue display's factory's
-/// queue: a request the sim applies in its next tick.
+/// queue: a request the sim applies in its next beat.
 static int push_build_count_request(lua_State* L, const char* func_name) {
     auto* fq = get_factory_queue(L);
     auto* queue = get_callback_queue(L);
@@ -3957,6 +3979,7 @@ void register_console_commands(ui::Console& console) {
     console.add("WLD_ResetSimRate", [](lua_State* L, const Args&) {
         if (game_speed(L) != 0) set_game_speed(L, 0);
     });
+    console.add("WLD_SingleStep", [](lua_State* L, const Args&) { session_single_step(L); });
 }
 
 void load_key_mappings(lua_State* L, ui::KeyMapRegistry& key_map) {

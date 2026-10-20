@@ -1919,12 +1919,12 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
 
     // 4b. OnFirstUpdate's rename (UserUnit:SetCustomName) is, as in Moho, a
-    //     command to the sim: queued, not applied, since no tick has run it.
+    //     command to the sim: queued, not applied, since no beat has run it.
     if (acu == 0) osc::test_status::fail("[FAIL] Test 4b: army 1 has no commander");
     else if (acu_name() != kMarkerName)
-        osc::test_status::fail("[FAIL] Test 4b: the commander was renamed '{}' outside a tick",
+        osc::test_status::fail("[FAIL] Test 4b: the commander was renamed '{}' outside a beat",
                                acu_name());
-    else spdlog::info("[PASS] Test 4b: the commander's new name waits for a tick");
+    else spdlog::info("[PASS] Test 4b: the commander's new name waits for a beat");
 
     // 5. StopLoadingDialog's fade-out ends in InitialAnimations ->
     //    HideGameUI('off') after ~4 s of UI time.
@@ -2674,7 +2674,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     lua_ok("Test 10k: unpause", "GetSelectedUnits()[1]:ProcessInfo('SetPaused', 'false')");
     play(1);
     // The orders panel's own settings: retail's pause toggle, fire state and
-    // script toggles are requests the sim applies in its next tick.
+    // script toggles are requests the sim applies in its next beat.
     lua_ok("Test 10l: the orders panel pauses the selection", R"(
         import('/lua/ui/game/orders.lua').TogglePauseState()
         if GetIsPaused(GetSelectedUnits()) then error('paused before the sim ran') end
@@ -2711,7 +2711,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     // The construction panel's orders reach the sim as commands: a factory's
     // builds (IssueBlueprintCommand), the queue display read from its
     // orders, Decrease- and IncreaseBuildCountInQueue and the Stop button, each applied in
-    // the sim's next tick. (They were SimCallbacks retail's scripts have no
+    // the sim's next beat. (They were SimCallbacks retail's scripts have no
     // handler for.)
     sim_lua(R"(
         local acu = ArmyBrains[1]:GetListOfUnits(categories.COMMAND, false)[1]
@@ -3242,7 +3242,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         else
             osc::test_status::fail("[FAIL] Test 11b: build click issued nothing");
     }
-    play(1); // the order applies in the sim's next tick
+    play(1); // the order applies in the sim's next beat
     lua_ok("Test 11c: the commander builds it; the mode ended", R"(
         local q = GetSelectedUnits()[1]:GetCommandQueue()
         if not q[1] or q[1].commandType ~= 8 then
@@ -6606,9 +6606,5 @@ void test_drag_render(TestContext& ctx) {
 
     spdlog::info("Drag render test: {}/{} passed", pass, pass + fail);
 }
-
-// ====================================================================
-// M90: IEffect / Emitter system test
-// ====================================================================
 
 } // namespace osc::test

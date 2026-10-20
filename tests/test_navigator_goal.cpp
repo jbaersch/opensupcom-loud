@@ -55,6 +55,7 @@ TEST_CASE("Navigator GetGoalPos exposes the active orders destination",
     target->set_max_health(100);
     target->set_health(100);
     target->set_position({96, 0, 80});
+    target->place_now();
     const auto target_id = sim.entity_registry().register_entity(std::move(target));
 
     const auto global = [&](const char* name, osc::u32 entity_id) {
@@ -93,6 +94,14 @@ TEST_CASE("Navigator GetGoalPos exposes the active orders destination",
     )")
               .ok());
     sim.entity_registry().find(target_id)->set_position({100, 0, 90});
+    sim.tick();
+    // Orders read the last committed position; the target's pending move
+    // becomes visible at this tick's coordinate commit.
+    CHECK(lua.do_string(R"(
+        local goal = nav:GetGoalPos()
+        assert(goal and goal[1] == 96 and goal[3] == 80)
+    )")
+              .ok());
     sim.tick();
     CHECK(lua.do_string(R"(
         local goal = nav:GetGoalPos()
