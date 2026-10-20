@@ -409,6 +409,64 @@ TEST_CASE("GetFocusUnit exposes a repair target, retires it on stop and preserve
     CHECK(world.lua.do_string("assert(moho.unit_methods.GetFocusUnit(AreaWorker) == nil)").ok());
 }
 
+TEST_CASE("Repair heals damage before assisting an active work item",
+          "[guard][area-assist][repair-priority]") {
+    AreaWorld world;
+    bool missile = true;
+    bool shield = false;
+    SECTION("a damaged silo") {}
+    SECTION("a damaged upgrading unit") {
+        missile = false;
+    }
+    SECTION("a silo with a damaged shield") {
+        shield = true;
+    }
+    auto* target = world.unit(60, 60);
+    auto* control = world.unit(90, 90);
+    auto* worker = world.worker(56, 60);
+    world.start_work(*target, missile);
+    world.start_work(*control, missile);
+    REQUIRE(world.lua
+                .do_string(missile
+                               ? "__blueprints.area_missile.Economy.BuildTime = 1000"
+                               : "__blueprints.area_site.Enhancements.AreaUpgrade.BuildTime = 1000")
+                .ok());
+    world.tick(8);
+    REQUIRE((missile ? target->silo_building() : target->is_enhancing()));
+    Unit* damaged = target;
+    if (shield) {
+        damaged = world.unit(60, 60);
+        target->add_category("SHIELD");
+        target->set_focus_entity_id(damaged->entity_id());
+        lua_rawgeti(world.lua.raw(), LUA_REGISTRYINDEX, target->lua_table_ref());
+        lua_setglobal(world.lua.raw(), "RepairSubject");
+        lua_rawgeti(world.lua.raw(), LUA_REGISTRYINDEX, damaged->lua_table_ref());
+        lua_setglobal(world.lua.raw(), "RepairBubble");
+        REQUIRE(world.lua
+                    .do_string(R"(
+            RepairSubject.ShieldIsOn = function() return true end
+            RepairBubble.RegenRate = 10
+        )")
+                    .ok());
+    }
+    damaged->set_health(900);
+    UnitCommand repair;
+    repair.type = CommandType::Repair;
+    repair.target_id = target->entity_id();
+    worker->push_command(repair, true);
+    const auto progress = [&](const Unit& unit) {
+        return missile ? unit.silo_build().progress : unit.work_progress();
+    };
+    world.tick(6);
+    CHECK(damaged->health() > 900);
+    CHECK(progress(*target) == Catch::Approx(progress(*control)));
+    world.tick(40);
+    CHECK(damaged->health() == damaged->max_health());
+    CHECK(worker->command_queue().empty());
+    CHECK_FALSE(worker->is_repairing());
+    CHECK(progress(*target) == Catch::Approx(progress(*control)));
+}
+
 TEST_CASE("Assisting work items respects helper stop, target cancellation, pause and replacement",
           "[guard][area-assist][area-work-item]") {
     const bool missile = GENERATE(false, true);

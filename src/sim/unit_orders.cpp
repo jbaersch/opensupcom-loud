@@ -1343,8 +1343,17 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
         }
         return std::string();
     };
+    // The work-item extension is for a healthy subject. A normal repair
+    // must still heal hull/shield damage, including while a new missile
+    // or enhancement is already under way.
+    const bool needs_repair = rtarget->health() < rtarget->max_health() ||
+                              static_cast<Unit*>(rtarget)->shield_needs_repair(registry, L);
+    if (destroyed() || !in_registry()) return OrderStep::Gone;
+    if (!current()) return OrderStep::Next;
+    rtarget = registry.find(target_id);
+    if (!rtarget || rtarget->destroyed() || !rtarget->is_unit()) return done();
     const auto& subject = static_cast<const Unit&>(*rtarget);
-    const std::string active_work = work_key(subject);
+    const std::string active_work = needs_repair ? std::string() : work_key(subject);
     bool inherited_work = cmd.blueprint_id.starts_with("__osc_enhance:") ||
                           cmd.blueprint_id.starts_with("__osc_silo:");
     if (inherited_work && cmd.blueprint_id != active_work) return done();
@@ -1358,8 +1367,7 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
     }
     // Already at full health? Done. (One under construction is built first.)
     const bool under_construction = static_cast<const Unit&>(*rtarget).is_being_built();
-    if (!under_construction && !inherited_work && rtarget->health() >= rtarget->max_health() &&
-        !static_cast<Unit*>(rtarget)->shield_needs_repair(registry, L)) {
+    if (!under_construction && !inherited_work && !needs_repair) {
         return done();
     }
     if (destroyed() || !in_registry()) return OrderStep::Gone;

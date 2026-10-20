@@ -2055,10 +2055,11 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
 
     // Don't repair units that are being built (use build-assist instead)
     if (target_unit->is_being_built()) return false;
-    const bool enhancement = target_unit->is_enhancing();
-    const bool silo = !enhancement && target_unit->silo_building();
-    if (target->health() >= target->max_health() &&
-        !target_unit->shield_needs_repair(registry, L) && !enhancement && !silo) {
+    const bool needs_repair =
+        target->health() < target->max_health() || target_unit->shield_needs_repair(registry, L);
+    const bool enhancement = !needs_repair && target_unit->is_enhancing();
+    const bool silo = !needs_repair && !enhancement && target_unit->silo_building();
+    if (!needs_repair && !enhancement && !silo) {
         return false;
     }
     if (destroyed() || !in_registry() || !current()) return false;

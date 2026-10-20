@@ -36,6 +36,15 @@ lifetime assertions. Initial failing cases and the subsequent results belong
 to the integration validation record. The stricter shared-turret direction
 assertions remain unchanged.
 
+The full retail missile gate also exposed an overlap in the retained Repair
+extension: an ordinary repair of a damaged silo was inheriting the next
+missile's work item instead of healing the silo. Active-work assistance now
+requires a healthy hull and shield. The native Guard policy still finishes its
+current missile assistance before beginning a repair and can assist again
+afterward. Synthetic damaged-silo, enhancement and shield cases fail before
+this correction and pass after it; the unchanged retail missile timing checks
+and related repair/save/replay gates then pass.
+
 ## Development file identity
 
 The combined replay layout is **18**: upstream 17 introduced beat scheduling,
