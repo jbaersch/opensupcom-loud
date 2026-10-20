@@ -89,3 +89,10 @@ for the exact tested source head and limits.
   reconciling phase timing, shared aim, work focus, coordinate/storage fixtures,
   per-view rendering and the replay-version collision. See the
   [integration decisions](plans/2026-10-20-loud-upstream-integration.md).
+- `5c74c847` — prioritize hull/shield repair over the fork's active-work
+  assistance extension; synthetic RED/GREEN plus the unchanged retail missile
+  and related save/repair gates.
+
+The [full 2026-10-20 integration record](validation/2026-10-20-loud-full-upstream.md)
+identifies this tested engine head and its adoption boundary. Documentation
+commits following it do not change runtime source.

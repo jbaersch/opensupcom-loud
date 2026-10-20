@@ -21,16 +21,18 @@ development and review. See the [commit index](loud-commit-index.md) and
 
 The initial acceptance checked upstream `main` at
 `68c79d06cfe6a40b58c69b765f8cddb4d88ad428`; its subsequent rendering/camera work
-was not part of that accepted executable. The separate integration candidate
-now includes all landed upstream changes through
+was not part of that accepted executable. The maintained LOUD source now
+includes all landed upstream changes through
 `9f4547810899a2e02b8e2dc94b93a40d52868340`: beat-based scheduling, phased
 movement/deletion, script-owned projectile damage and independent world views.
 The [current integration decisions](plans/2026-10-20-loud-upstream-integration.md)
 explain how the retained fork contracts fit those changes. The
 [earlier integration record](validation/2026-10-18-loud-upstream-integration.md)
 remains evidence for its own source state.
-The preserved gameplay build remains separate while long-duration and large-load
-acceptance of the candidate is pending.
+The [full integration validation](validation/2026-10-20-loud-full-upstream.md)
+records the tested engine `5c74c847`, long LOUD games and replays, original-data
+checks, large battles and platform limits. The preserved gameplay launcher
+remains separate from this source adoption.
 
 Useful review groups, in dependency order:
 
@@ -58,10 +60,10 @@ ctest --preset linux-debug -LE 'data|lint' --output-on-failure
 bash tools/check_format.sh a799c964e25708b5512f16aee93845dcaca01dc8
 ```
 
-The formatting tool requires LLVM 22. The inherited CI covers GCC, Clang,
-ASan/UBSan, MSVC and data-free cross-OS play; CI results for this new branch must
-be checked after it is published. The local results below are not Windows or
-cross-OS acceptance. For targeted tests, for example:
+The formatting tool requires LLVM 22. CI covers GCC, Clang, ASan/UBSan, MSVC
+and data-free cross-OS play. See the dated full integration record for results
+on the exact engine head; historical local measurements below are not current
+Windows gameplay acceptance. For targeted tests, for example:
 
 ```sh
 build/linux-debug/tests/osc_tests '[pathfinding][cache]' --reporter compact
@@ -89,7 +91,7 @@ sandbox. Development runs used a read-only installation and isolated writable
 runtime directories. No original game executable was started for these checks.
 
 **Start a fresh match.** The combined beat/player-table replay format is 18;
-the save container remains 4 and this integration candidate uses native snapshot
+the save container remains 4 and the integrated source uses native snapshot
 layout 75 (the preserved initial gameplay build used 56). Existing
 build/content identity guards remain enabled. Keep older saves and their matching
 executables; cross-build replay or snapshot loading is not promised. These
@@ -98,8 +100,8 @@ changes do not implement common multiplayer save/resume.
 ## Historical validation and measured limits
 
 These measurements describe the initial accepted build. They do not transfer
-automatically to the newer upstream-integration candidate; see its separate
-[acceptance record](validation/2026-10-18-loud-upstream-integration.md).
+automatically to newer engine source; see the
+[current integration record](validation/2026-10-20-loud-full-upstream.md).
 
 The pre-export engine/test source passed 1,639 Catch2 cases / 322,904 assertions,
 18 architecture checks and four local two-process lockstep checks on Linux.

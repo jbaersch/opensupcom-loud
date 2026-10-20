@@ -4,10 +4,13 @@ For this contribution branch, see [LOUD scope and evidence](loud-fork.md).
 The wider capability/validation matrix below is inherited upstream evidence,
 not complete acceptance of this fork with LOUD.
 
-The integration candidate now filters empty platoons from Lua enumeration,
-including groups emptied by a same-tick transfer. See the
-[focused regression and validation record](validation/2026-10-20-platoon-transfer.md);
-the remaining LOUD AI and full-integration acceptance gaps stay open.
+The maintained LOUD source includes the complete landed upstream target
+`9f454781`, the [platoon-list correction](validation/2026-10-20-platoon-transfer.md)
+and a repair-priority correction. The
+[2026-10-20 integration record](validation/2026-10-20-loud-full-upstream.md)
+covers engine `5c74c847`: two 36,000-tick LOUD games with exact replays,
+source/UI checks and large battles. This is bounded evidence; it does not
+certify every mod configuration or replace the preserved gameplay launcher.
 
 What the engine does today, and the evidence for it. Every claim below points at a test that runs in the gate or at a validation record of an exact commit (`docs/validation/`); claims without evidence are listed as gaps. The phases and their history are in `docs/ROADMAP.md`.
 

@@ -9,9 +9,11 @@ starts from upstream `a799c964`. New integration candidates have separate
 [scope and evidence](loud-fork.md); fetching or merging a newer upstream does
 not transfer that earlier acceptance.
 
-The current pinned integration target is upstream `9f454781`; its
-[phase and format decisions](plans/2026-10-20-loud-upstream-integration.md)
-are separate from the initial gameplay/performance evidence.
+The maintained source includes upstream `9f454781`; its
+[phase and format decisions](plans/2026-10-20-loud-upstream-integration.md) and
+[full validation record](validation/2026-10-20-loud-full-upstream.md) identify
+the tested engine `5c74c847`. Source adoption preserves the original gameplay
+launcher and matching older saves.
 
 ## Branches and remotes
 

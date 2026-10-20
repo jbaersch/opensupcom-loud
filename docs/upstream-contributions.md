@@ -38,9 +38,10 @@ The [current integration](plans/2026-10-20-loud-upstream-integration.md) contain
 the full pinned upstream target. Upstream's native snapshot layout is 74; the
 combined fork uses 75 and replay layout 18. The initially accepted LOUD gameplay
 build uses snapshot layout 56.
-Keep the accepted launcher, executable, saves and replays together until the new
-build passes its own tests. A successful small upstream contribution does not
-establish LOUD acceptance of the entire new upstream tree.
+The [full integration record](validation/2026-10-20-loud-full-upstream.md)
+records the bounded acceptance of engine `5c74c847` for source adoption into
+`codex/loud`. Keep the previously accepted launcher, executable, saves and
+replays together; source adoption does not silently replace that gameplay build.
 
 Follow the [collaboration guide](collaboration.md) for compact handoffs and the
 [fork workflow](fork-workflow.md) for branches and publication.
