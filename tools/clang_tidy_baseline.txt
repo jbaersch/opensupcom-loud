@@ -8,4 +8,5 @@
 1 src/renderer/overlay_renderer.hpp bugprone-throwing-static-initialization
 1 src/sim/armor_definition.cpp bugprone-unchecked-string-to-number-conversion
 1 src/ui/ui_dispatch.cpp clang-analyzer-deadcode.DeadStores
-23 tests/integration/runner/integration_tests.cpp readability-redundant-string-cstr
+21 tests/integration/runner/integration_tests.cpp readability-redundant-string-cstr
+2 tests/integration/runner/ui_contracts_test.cpp readability-redundant-string-cstr
