@@ -4,6 +4,11 @@ For this contribution branch, see [LOUD scope and evidence](loud-fork.md).
 The wider capability/validation matrix below is inherited upstream evidence,
 not complete acceptance of this fork with LOUD.
 
+The integration candidate now filters empty platoons from Lua enumeration,
+including groups emptied by a same-tick transfer. See the
+[focused regression and validation record](validation/2026-10-20-platoon-transfer.md);
+the remaining LOUD AI and full-integration acceptance gaps stay open.
+
 What the engine does today, and the evidence for it. Every claim below points at a test that runs in the gate or at a validation record of an exact commit (`docs/validation/`); claims without evidence are listed as gaps. The phases and their history are in `docs/ROADMAP.md`.
 
 ## What This Codebase Is
@@ -24,7 +29,7 @@ Where the scripts leave Moho's rules unclear, they come from the decompiled engi
 
 | Metric | Value |
 | --- | --- |
-| Unit tests (Catch2) | <!-- metric:unit_test_cases -->1,716<!-- /metric --> test cases in a Linux build (Windows leaves out a few POSIX-only ones). CI runs them on GCC, Clang, ASan and MSVC. |
+| Unit tests (Catch2) | <!-- metric:unit_test_cases -->1,718<!-- /metric --> test cases in a Linux build (Windows leaves out a few POSIX-only ones). CI runs them on GCC, Clang, ASan and MSVC. |
 | Data-backed gate on retail (`ctest -L gate`) | <!-- metric:gate_tests -->269<!-- /metric --> tests, each a mode of `osc_integration` playing retail's scripts and data (one per system: `--missile-test`, `--footfall-test`, `--selection-render-test`...), plus the flows below; two save/load flows run on FAF's data instead, where FAF's client is installed. |
 | Golden captures (`ctest -L golden`) | <!-- metric:golden_tests -->7<!-- /metric --> pixel comparisons at 0.1%: FA's game interface at frame 600 (with and without the minimap), retail's skirmish lobby and its map list, and a mouse held through the window's input (`--mouse`): a wall dragged out, and a drag formation settled. |
 | Two-process MP tests (`ctest -L mp`, data-free) | <!-- metric:mp_tests -->4<!-- /metric --> |

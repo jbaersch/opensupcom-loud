@@ -8,6 +8,10 @@ review in separate commits. See [scope/tests/measurements](loud-fork.md) and the
 three-player LOUD acceptance and Windows acceptance of this branch remain open.
 The roadmap below retains upstream's broader milestones and validation history.
 
+The focused [2026-10-20 platoon-list correction](validation/2026-10-20-platoon-transfer.md)
+addresses the same-tick transfer crash in the integration candidate. It leaves
+the other normal-game AI failures and full LOUD acceptance open.
+
 **Status:** living document. Created 2026-09-22 from a code-level audit of `main` at `b91732d`.
 **Scope:** everything from "builds on Linux" to "shippable 1.0". The per-milestone
 implementation plans live in `docs/superpowers/plans/`. Measured status lives in

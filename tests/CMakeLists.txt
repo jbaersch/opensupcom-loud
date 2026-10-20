@@ -1,4 +1,5 @@
 add_executable(osc_tests
+    test_platoon_transfer.cpp
     test_session_start.cpp
     test_session_failures.cpp
     test_session_brain_initialization.cpp

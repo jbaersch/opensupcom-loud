@@ -1147,7 +1147,8 @@ static int brain_GetNumUnitsAroundPoint(lua_State* L) {
 // brain:GetPlatoonsList() → table of platoon Lua tables
 static int brain_GetPlatoonsList(lua_State* L) {
     auto* brain = check_brain(L);
-    if (!brain) {
+    auto* sim = get_sim(L);
+    if (!brain || !sim) {
         lua_newtable(L);
         return 1;
     }
@@ -1156,7 +1157,13 @@ static int brain_GetPlatoonsList(lua_State* L) {
     int idx = 1;
     for (size_t i = 0; i < brain->platoon_count(); i++) {
         auto* p = brain->platoon_at(i);
-        if (!p || p->destroyed() || p->lua_table_ref() < 0) continue;
+        if (!p || p->destroyed() || p->lua_table_ref() < 0 || p->is_army_pool()) continue;
+        // Moho's Lua list excludes empty groups even before the next army
+        // cleanup. Count members until actual deletion, not merely Destroy.
+        if (std::none_of(p->unit_ids().begin(), p->unit_ids().end(), [&](u32 id) {
+                return sim->entity_registry().find_retained(id) != nullptr;
+            }))
+            continue;
         lua_pushnumber(L, idx++);
         lua_rawgeti(L, LUA_REGISTRYINDEX, p->lua_table_ref());
         lua_rawset(L, -3);

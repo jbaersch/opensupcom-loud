@@ -107,6 +107,11 @@ produce units. It does not alter the installed game scripts.
 
 ## Normal-game blockers found in the current content
 
+Follow-up on 2026-10-20: the focused
+[platoon-enumeration correction](2026-10-20-platoon-transfer.md) addresses the
+transfer failure described below. The historical results here remain attached
+to their original source state; the other two AI failures remain open.
+
 The same original failure still reproduces at tick 12,859 after the lifetime
 correction: within one beat the last live member transfers to another platoon,
 leaving an empty group before the next cleanup. The LOUD merge code calls
