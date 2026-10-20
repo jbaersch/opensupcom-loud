@@ -9,6 +9,10 @@ starts from upstream `a799c964`. New integration candidates have separate
 [scope and evidence](loud-fork.md); fetching or merging a newer upstream does
 not transfer that earlier acceptance.
 
+The current pinned integration target is upstream `9f454781`; its
+[phase and format decisions](plans/2026-10-20-loud-upstream-integration.md)
+are separate from the initial gameplay/performance evidence.
+
 ## Branches and remotes
 
 - `origin`: this public fork. `codex/loud` is the maintained LOUD branch and the

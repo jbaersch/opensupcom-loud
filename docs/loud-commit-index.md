@@ -77,3 +77,15 @@ for the exact tested source head and limits.
 
 - `84ab96ae` — retain platoon membership through queued unit deletion; a synthetic
   RED/GREEN case checks membership and position before and after the queue drains.
+
+## Subsequent integration, 2026-10-20
+
+- `16cd3da0` — retain the same 30 static-analysis allowances while following the
+  earlier UI-file split.
+- `f87915a6` — filter empty platoons and ArmyPool from Lua enumeration, preserving
+  direct-handle lifetime and nil positions.
+- `a383ef82` — merge the complete upstream target
+  `9f4547810899a2e02b8e2dc94b93a40d52868340` into candidate `61f9401f`,
+  reconciling phase timing, shared aim, work focus, coordinate/storage fixtures,
+  per-view rendering and the replay-version collision. See the
+  [integration decisions](plans/2026-10-20-loud-upstream-integration.md).

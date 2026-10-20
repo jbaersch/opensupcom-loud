@@ -11,7 +11,7 @@ Development continues on `codex/loud` in the public fork. The
 
 ## Branch and review scope
 
-The branch starts at upstream commit
+The original fork started at upstream commit
 `a799c964e25708b5512f16aee93845dcaca01dc8`. Its 42 engine/test commits remain
 separate, in dependency order, followed by publication preparation. Private
 workstation notes and runtime captures are not part of this branch or its new
@@ -22,9 +22,13 @@ development and review. See the [commit index](loud-commit-index.md) and
 The initial acceptance checked upstream `main` at
 `68c79d06cfe6a40b58c69b765f8cddb4d88ad428`; its subsequent rendering/camera work
 was not part of that accepted executable. The separate integration candidate
-now merges upstream `d98ad20318aed5c44ae861e59a0358d84ed62b99`. Its overlap
-decisions, technical checks and remaining acceptance are in the
-[dated integration record](validation/2026-10-18-loud-upstream-integration.md).
+now includes all landed upstream changes through
+`9f4547810899a2e02b8e2dc94b93a40d52868340`: beat-based scheduling, phased
+movement/deletion, script-owned projectile damage and independent world views.
+The [current integration decisions](plans/2026-10-20-loud-upstream-integration.md)
+explain how the retained fork contracts fit those changes. The
+[earlier integration record](validation/2026-10-18-loud-upstream-integration.md)
+remains evidence for its own source state.
 The preserved gameplay build remains separate while long-duration and large-load
 acceptance of the candidate is pending.
 
@@ -34,7 +38,7 @@ Useful review groups, in dependency order:
 | --- | --- |
 | Source startup | Initialize UI options before building each state, use script-local scenario markers, preserve complete plain-data player entries across the UI/sim boundary, initialize native army slots before brain callbacks, stop failed starts without replacement commanders. `test_ui_startup`, `test_session_start`, `test_session_brain_initialization`, `test_session_failures`, `test_replay`. |
 | Script-facing primitives | Category selection, threat aliases, navigator goals, no-self lobby broadcasts, entity Kill, blueprint defaults and shared projectile blueprints. Corresponding `test_ui_category_selection`, `test_influence_map`, `test_navigator_goal`, `test_net_lobby`, `test_entity_kill_contract`, `test_blueprint_defaults`, `test_weapon_projectile_blueprint`. |
-| Weapons and diagnostics | Preserve scripted zero-damage targeters, initialize script weapons once, exclude explicit dummy weapons, aim after body motion, use muzzle-relative shared aim, count callback faults, recognize complete assertion-failure tokens. `test_zero_damage_targeter`, `test_unit_weapon_lifecycle`, `test_weapon_dummy_contract`, `test_hover_aim_timing`, `test_lua_log_failures`. |
+| Weapons and diagnostics | Preserve scripted zero-damage targeters, initialize script weapons once, exclude explicit dummy weapons, retain muzzle-relative shared aim within upstream's motion phase, count callback faults, recognize complete assertion-failure tokens. `test_zero_damage_targeter`, `test_unit_weapon_lifecycle`, `test_weapon_dummy_contract`, `test_hover_aim_timing`, `test_lua_log_failures`. |
 | Player orders and rendering | Recorded cheat-dialog creation and caps, build-grid snapping, shared construction and area assist, aircraft separation, formation previews and growing strategic-icon buffers. `test_cheat_console`, `test_cheat_spawn`, `test_shared_build_site`, `test_guard_area_assist`, `test_air_separation`, `test_formation_icons`. |
 | Navigation | Validate entire smoothed segments, bypass A* only on clear routes, retain corners until passed, replan blocked routes on grid changes, normalize ground-motion orientations, cache exact raw routes. `test_direct_path`, `test_path_smoothing`, `test_dynamic_navigation`, `test_ground_snap`, `test_path_cache`. |
 | Query and scheduling cost | Exact rectangle membership, conservative rounded-radius bounds, smaller acceleration cells, enemy prefiltering, unordered boolean reductions with explicit target tie-breaks, category-bit reuse, bounded Lua mass-loss sweeping, yielding between complete solo ticks. `test_entity_rect_query`, `test_spatial_cell_membership`, `test_weapon_candidate_walk`, `test_target_recheck`, `test_category_bit_contract`, `test_lua_gc_budget_contract`, `test_session_tick_budget`. |
@@ -84,14 +88,14 @@ separate preferences and saves; they do not make the process a filesystem
 sandbox. Development runs used a read-only installation and isolated writable
 runtime directories. No original game executable was started for these checks.
 
-**Start a fresh match.** Player-table transport introduces replay format 17;
+**Start a fresh match.** The combined beat/player-table replay format is 18;
 the save container remains 4 and this integration candidate uses native snapshot
-layout 60 (the preserved initial gameplay build used 56). Existing
+layout 75 (the preserved initial gameplay build used 56). Existing
 build/content identity guards remain enabled. Keep older saves and their matching
 executables; cross-build replay or snapshot loading is not promised. These
 changes do not implement common multiplayer save/resume.
 
-## Validation and measured limits
+## Historical validation and measured limits
 
 These measurements describe the initial accepted build. They do not transfer
 automatically to the newer upstream-integration candidate; see its separate
