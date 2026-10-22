@@ -12,8 +12,10 @@ const char* version();
 /// made (a tag, or a commit), "unknown" outside a git checkout.
 const char* revision();
 
-/// "<version>-<revision>": what replays and saved games carry, so that a
-/// build reads only its own saves.
+/// "<version>-<full commit id>[-dirty]": what replays and saved games carry.
+/// Unlike revision(), this is independent of tags, clone depth and Git's
+/// abbreviation settings. The commit id is "unknown" outside a git checkout;
+/// dirty and unknown identities do not identify unique source contents.
 const char* build_id();
 
 /// "OpenSupCom <version> (<revision>)", as --version prints it.

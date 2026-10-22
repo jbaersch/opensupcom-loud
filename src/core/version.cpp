@@ -17,7 +17,7 @@ const char* revision() {
 }
 
 const char* build_id() {
-    return OSC_VERSION "-" OSC_REVISION;
+    return OSC_VERSION "-" OSC_SOURCE_ID;
 }
 
 const char* version_line() {

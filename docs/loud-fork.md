@@ -97,6 +97,10 @@ build/content identity guards remain enabled. Keep older saves and their matchin
 executables; cross-build replay or snapshot loading is not promised. These
 changes do not implement common multiplayer save/resume.
 
+New source builds use a [stable full-commit build identity](plans/2026-10-22-build-identity.md)
+instead of Git's clone-dependent description. This leaves layouts and reader
+checks intact; older files retain their original IDs and matching executables.
+
 ## Historical validation and measured limits
 
 These measurements describe the initial accepted build. They do not transfer

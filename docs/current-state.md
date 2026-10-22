@@ -12,6 +12,12 @@ covers engine `5c74c847`: two 36,000-tick LOUD games with exact replays,
 source/UI checks and large battles. This is bounded evidence; it does not
 certify every mod configuration or replace the preserved gameplay launcher.
 
+Build identity now uses the full source commit, independent of Git abbreviation,
+tags and clone depth; the readable version display remains unchanged. The
+[identity contract](plans/2026-10-22-build-identity.md) describes the regression
+and development-file boundary. Older saves and recordings stay with their
+matching executables.
+
 What the engine does today, and the evidence for it. Every claim below points at a test that runs in the gate or at a validation record of an exact commit (`docs/validation/`); claims without evidence are listed as gaps. The phases and their history are in `docs/ROADMAP.md`.
 
 ## What This Codebase Is
@@ -36,7 +42,7 @@ Where the scripts leave Moho's rules unclear, they come from the decompiled engi
 | Data-backed gate on retail (`ctest -L gate`) | <!-- metric:gate_tests -->270<!-- /metric --> tests, each a mode of `osc_integration` playing retail's scripts and data (one per system: `--missile-test`, `--footfall-test`, `--selection-render-test`...), plus the flows below; two save/load flows run on FAF's data instead, where FAF's client is installed. |
 | Golden captures (`ctest -L golden`) | <!-- metric:golden_tests -->7<!-- /metric --> pixel comparisons at 0.1%: FA's game interface at frame 600 (with and without the minimap), retail's skirmish lobby and its map list, and a mouse held through the window's input (`--mouse`): a wall dragged out, and a drag formation settled. |
 | Two-process MP tests (`ctest -L mp`, data-free) | <!-- metric:mp_tests -->4<!-- /metric --> |
-| Architecture checks (`ctest -L arch`) | <!-- metric:arch_tests -->18<!-- /metric -->: no library cycle or layer reaching up; every serialized type's fields in its serializer; the blueprint-field, Lua-stub and retail-hook baselines; this document's metrics. |
+| Architecture checks (`ctest -L arch`) | <!-- metric:arch_tests -->19<!-- /metric -->: no library cycle or layer reaching up; every serialized type's fields in its serializer; the blueprint-field, Lua-stub and retail-hook baselines; build identity across Git clones; this document's metrics. |
 | Static analysis | clang-tidy ratchet at its baseline of <!-- metric:tidy_baseline -->30<!-- /metric --> triaged findings; changed lines follow `.clang-format`; CI builds first-party code with `-Werror`. |
 | Retail engine API still unbound | <!-- metric:unbound_globals -->12<!-- /metric --> globals and <!-- metric:unbound_methods -->7<!-- /metric --> methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`); 13 are not in retail's engine either, most of the rest are UI-only. |
 

@@ -222,12 +222,15 @@ if(OSC_BUILD_TESTS)
         add_test(NAME arch.version_self_test
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_version.py
                          --self-test)
+        add_test(NAME arch.build_identity
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/test_build_identity.py
+                         ${CMAKE_SOURCE_DIR} ${CMAKE_COMMAND})
         add_test(NAME arch.install
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_install.py
                          ${CMAKE_BINARY_DIR} $<CONFIG> ${PROJECT_VERSION})
         add_test(NAME arch.bench_self_test
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/bench.py --self-test)
-        set_tests_properties(arch.version arch.version_self_test arch.install
+        set_tests_properties(arch.version arch.version_self_test arch.build_identity arch.install
                              arch.bench_self_test PROPERTIES LABELS "arch" TIMEOUT 120)
     endif()
 endif()
