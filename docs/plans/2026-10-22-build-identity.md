@@ -50,8 +50,8 @@ The regression uses synthetic temporary Git repositories and the actual CMake
 generator. It checks full and shallow clones, tags, abbreviation settings,
 different commits, tracked edits, untracked files, unchanged-header timestamps
 and the no-Git fallback. Existing save/replay and snapshot-identity checks
-exercise the unchanged consumers. The dated validation record states the exact
-tested commit and platform limits.
+exercise the unchanged consumers. The [validation record](../validation/2026-10-22-build-identity.md) states the
+exact tested commit and platform limits.
 
 Behavioral sources are the existing build/reader contracts and the recorded
 clone-dependent failure. No game data or original-game implementation is needed.
